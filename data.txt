@@ -1,0 +1,2348 @@
+$ go run . -N 65536 -m 16 -n 2048 -d 8388607 -func random -logq "52,59,59,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52, 52,52,52,52,52,52,52,52,52,30" -logp "55,55,55,55,55" -T 8257537 -p 65536 -final-ks-level-p=-1 -final-ks-pow2-base=1 -run 100
+========== BFV Parameters ==========
+N                         : 65536
+m                         : 16
+n (LWE dimension)         : 2048
+input degree d            : 8388607
+degree mode               : d+1 power-of-two path
+internal eval degree      : 8388608
+poly-eval algorithm       : alg5
+poly LT baby steps        : auto
+poly LT giant steps       : auto
+plaintext modulus T       : 8257537
+message modulus p         : 65536
+alpha=floor(T/p)          : 126
+MaxLevel                  : 27
+LogQ bits                 : [52 59 59 52 52 52 52 52 52 52 52 52 52 52 52 52 52 52 52 52 52 52 52 52 52 52 52 30]
+LogP bits                 : [55 55 55 55 55]
+Q factors                 : [4503599627763713 576460752300015617 576460752298835969 4503599626321921 4503599628943361 4503599625535489 4503599629467649 4503599625404417 4503599631433729 4503599623045121 4503599632613377 4503599621472257 4503599634579457 4503599635628033 4503599619112961 4503599637200897 4503599615311873 4503599640477697 4503599641526273 4503599613214721 4503599642836993 4503599643885569 4503599645065217 4503599647817729 4503599607840769 4503599606661121 4503599651094529 1073872897]
+P factors                 : [36028797019488257 36028797023420417 36028797014376449 36028797024206849 36028797013327873]
+====================================
+
+---------- One-time preprocessing ----------
+SlotToCoeff basis         : 20.9037ms
+SlotToCoeff diagonals     : 0s
+SlotToCoeff plaintexts    : 277.7991ms
+key generation            : 4.6519072s
+encrypted secret blocks   : 58.1647ms
+target secret build       : 31.2168ms
+evaluation-key generation : 143.5165ms
+poly-eval Galois keys     : 95
+SlotToCoeff rotations     : 6
+packing Galois keys       : 13
+distinct Galois keys total: 101
+leveled rotation keys     : true
+rotation level plan       : pack=26, polyPower=13, polyGrouped=2, polyLT-in=2, polyLT-out=2, final-sum=1, poly-out=1
+rotation keys total size  : 2.94 GiB (3153127104 bytes)
+  - LevelQ=0 (#Q=1, logQ≈53 bits): 3 keys, 18.00 MiB (18874896 bytes)
+  - LevelQ=1 (#Q=2, logQ≈112 bits): 3 keys, 21.00 MiB (22020672 bytes)
+  - LevelQ=2 (#Q=3, logQ≈171 bits): 83 keys, 664.02 MiB (696271728 bytes)
+  - LevelQ=26 (#Q=27, logQ≈1419 bits): 12 keys, 2.25 GiB (2415959808 bytes)
+relinearization key size  : 198.00 MiB (207621520 bytes)
+final key-switch key level: LevelQ=0 (#Q=1, logQ≈53 bits), LevelP=-1 (no P)
+final key-switch pow2 base: 2^1
+final key-switch params   : Q-only parameter view, PCount=0
+final key-switch key size : 52.00 MiB (54528888 bytes)
+auxiliary keys total size : 3.18 GiB (3415277512 bytes)
+encrypted secret size     : 28.00 MiB (29360878 bytes)
+one-time preprocessing    : 5.330185s
+--------------------------------------------
+
+[progress +5.397s] run 1/100: dynamic setup
+[progress +29.091s] run 2/100: dynamic setup
+[progress +52.911s] run 3/100: dynamic setup
+[progress +1m15.531s] run 4/100: dynamic setup
+[progress +1m38.141s] run 5/100: dynamic setup
+[progress +2m1.058s] run 6/100: dynamic setup
+[progress +2m23.543s] run 7/100: dynamic setup
+[progress +2m46.506s] run 8/100: dynamic setup
+[progress +3m9.559s] run 9/100: dynamic setup
+[progress +3m32.07s] run 10/100: dynamic setup
+[progress +3m55.077s] run 11/100: dynamic setup
+[progress +4m18.037s] run 12/100: dynamic setup
+[progress +4m40.75s] run 13/100: dynamic setup
+[progress +5m3.741s] run 14/100: dynamic setup
+[progress +5m26.351s] run 15/100: dynamic setup
+[progress +5m49.244s] run 16/100: dynamic setup
+[progress +6m12.065s] run 17/100: dynamic setup
+[progress +6m34.638s] run 18/100: dynamic setup
+[progress +6m57.665s] run 19/100: dynamic setup
+[progress +7m20.096s] run 20/100: dynamic setup
+[progress +7m42.629s] run 21/100: dynamic setup
+[progress +8m5.464s] run 22/100: dynamic setup
+[progress +8m27.949s] run 23/100: dynamic setup
+[progress +8m51.08s] run 24/100: dynamic setup
+[progress +9m14.013s] run 25/100: dynamic setup
+[progress +9m36.716s] run 26/100: dynamic setup
+[progress +9m59.619s] run 27/100: dynamic setup
+[progress +10m22.186s] run 28/100: dynamic setup
+[progress +10m45.082s] run 29/100: dynamic setup
+[progress +11m7.881s] run 30/100: dynamic setup
+[progress +11m30.386s] run 31/100: dynamic setup
+[progress +11m53.276s] run 32/100: dynamic setup
+[progress +12m15.919s] run 33/100: dynamic setup
+[progress +12m38.985s] run 34/100: dynamic setup
+[progress +13m2.129s] run 35/100: dynamic setup
+[progress +13m25.247s] run 36/100: dynamic setup
+[progress +13m48.347s] run 37/100: dynamic setup
+[progress +14m11.122s] run 38/100: dynamic setup
+[progress +14m33.501s] run 39/100: dynamic setup
+[progress +14m56.649s] run 40/100: dynamic setup
+[progress +15m19.303s] run 41/100: dynamic setup
+[progress +15m42.053s] run 42/100: dynamic setup
+[progress +16m4.872s] run 43/100: dynamic setup
+[progress +16m27.382s] run 44/100: dynamic setup
+[progress +16m50.346s] run 45/100: dynamic setup
+[progress +17m13.027s] run 46/100: dynamic setup
+[progress +17m35.537s] run 47/100: dynamic setup
+[progress +17m58.474s] run 48/100: dynamic setup
+[progress +18m20.868s] run 49/100: dynamic setup
+[progress +18m43.606s] run 50/100: dynamic setup
+[progress +19m6.519s] run 51/100: dynamic setup
+[progress +19m28.921s] run 52/100: dynamic setup
+[progress +19m51.665s] run 53/100: dynamic setup
+[progress +20m14.167s] run 54/100: dynamic setup
+[progress +20m36.647s] run 55/100: dynamic setup
+[progress +20m59.742s] run 56/100: dynamic setup
+[progress +21m22.344s] run 57/100: dynamic setup
+[progress +21m45.049s] run 58/100: dynamic setup
+[progress +22m7.915s] run 59/100: dynamic setup
+[progress +22m30.397s] run 60/100: dynamic setup
+[progress +22m53.373s] run 61/100: dynamic setup
+[progress +23m16.085s] run 62/100: dynamic setup
+[progress +23m38.719s] run 63/100: dynamic setup
+[progress +24m1.686s] run 64/100: dynamic setup
+[progress +24m24.197s] run 65/100: dynamic setup
+[progress +24m47.065s] run 66/100: dynamic setup
+[progress +25m9.901s] run 67/100: dynamic setup
+[progress +25m32.261s] run 68/100: dynamic setup
+[progress +25m54.967s] run 69/100: dynamic setup
+[progress +26m17.34s] run 70/100: dynamic setup
+[progress +26m39.885s] run 71/100: dynamic setup
+[progress +27m2.881s] run 72/100: dynamic setup
+[progress +27m25.398s] run 73/100: dynamic setup
+[progress +27m48.234s] run 74/100: dynamic setup
+[progress +28m10.938s] run 75/100: dynamic setup
+[progress +28m33.285s] run 76/100: dynamic setup
+[progress +28m56.294s] run 77/100: dynamic setup
+[progress +29m18.843s] run 78/100: dynamic setup
+[progress +29m41.56s] run 79/100: dynamic setup
+[progress +30m4.441s] run 80/100: dynamic setup
+[progress +30m26.896s] run 81/100: dynamic setup
+[progress +30m49.855s] run 82/100: dynamic setup
+[progress +31m12.678s] run 83/100: dynamic setup
+[progress +31m35.191s] run 84/100: dynamic setup
+[progress +31m58.156s] run 85/100: dynamic setup
+[progress +32m20.671s] run 86/100: dynamic setup
+[progress +32m43.511s] run 87/100: dynamic setup
+[progress +33m6.68s] run 88/100: dynamic setup
+[progress +33m29.322s] run 89/100: dynamic setup
+[progress +33m52.529s] run 90/100: dynamic setup
+[progress +34m15.42s] run 91/100: dynamic setup
+[progress +34m38.085s] run 92/100: dynamic setup
+[progress +35m1.087s] run 93/100: dynamic setup
+[progress +35m23.594s] run 94/100: dynamic setup
+[progress +35m46.319s] run 95/100: dynamic setup
+[progress +36m9.136s] run 96/100: dynamic setup
+[progress +36m31.531s] run 97/100: dynamic setup
+[progress +36m54.599s] run 98/100: dynamic setup
+[progress +37m17.157s] run 99/100: dynamic setup
+[progress +37m39.716s] run 100/100: dynamic setup
+========== Per-run Summary ==========
+Run 1: func-seed=20260402, lwe-noise-seed=54321, lwe-a-seed=314159, correct=true, noise mean=7.9375, noise std=10.7032, max|.|=23, online=18.6389461s
+Run 2: func-seed=20260403, lwe-noise-seed=54322, lwe-a-seed=314160, correct=true, noise mean=11.1250, noise std=13.5641, max|.|=36, online=18.981291s
+Run 3: func-seed=20260404, lwe-noise-seed=54323, lwe-a-seed=314161, correct=true, noise mean=4.9375, noise std=13.0646, max|.|=35, online=17.955745s
+Run 4: func-seed=20260405, lwe-noise-seed=54324, lwe-a-seed=314162, correct=true, noise mean=4.6875, noise std=11.2734, max|.|=24, online=17.9588351s
+Run 5: func-seed=20260406, lwe-noise-seed=54325, lwe-a-seed=314163, correct=true, noise mean=4.5625, noise std=12.3742, max|.|=29, online=18.1271279s
+Run 6: func-seed=20260407, lwe-noise-seed=54326, lwe-a-seed=314164, correct=true, noise mean=2.8750, noise std=9.6428, max|.|=20, online=17.7702978s
+Run 7: func-seed=20260408, lwe-noise-seed=54327, lwe-a-seed=314165, correct=true, noise mean=8.1875, noise std=12.6056, max|.|=34, online=18.3033132s
+Run 8: func-seed=20260409, lwe-noise-seed=54328, lwe-a-seed=314166, correct=true, noise mean=6.1250, noise std=12.4693, max|.|=34, online=18.348776s
+Run 9: func-seed=20260410, lwe-noise-seed=54329, lwe-a-seed=314167, correct=true, noise mean=5.6875, noise std=10.9300, max|.|=22, online=17.8381665s
+Run 10: func-seed=20260411, lwe-noise-seed=54330, lwe-a-seed=314168, correct=true, noise mean=12.1250, noise std=12.1134, max|.|=31, online=18.3256499s
+Run 11: func-seed=20260412, lwe-noise-seed=54331, lwe-a-seed=314169, correct=true, noise mean=7.6250, noise std=9.2660, max|.|=26, online=18.0778796s
+Run 12: func-seed=20260413, lwe-noise-seed=54332, lwe-a-seed=314170, correct=true, noise mean=8.0625, noise std=9.8645, max|.|=33, online=17.9716485s
+Run 13: func-seed=20260414, lwe-noise-seed=54333, lwe-a-seed=314171, correct=true, noise mean=7.4375, noise std=12.1859, max|.|=27, online=18.3178808s
+Run 14: func-seed=20260415, lwe-noise-seed=54334, lwe-a-seed=314172, correct=true, noise mean=8.6250, noise std=9.5582, max|.|=28, online=17.9483113s
+Run 15: func-seed=20260416, lwe-noise-seed=54335, lwe-a-seed=314173, correct=true, noise mean=6.0625, noise std=10.6505, max|.|=28, online=18.232065s
+Run 16: func-seed=20260417, lwe-noise-seed=54336, lwe-a-seed=314174, correct=true, noise mean=6.8125, noise std=7.8200, max|.|=25, online=18.1431606s
+Run 17: func-seed=20260418, lwe-noise-seed=54337, lwe-a-seed=314175, correct=true, noise mean=6.1875, noise std=13.7169, max|.|=33, online=17.9101736s
+Run 18: func-seed=20260419, lwe-noise-seed=54338, lwe-a-seed=314176, correct=true, noise mean=5.9375, noise std=13.9798, max|.|=34, online=18.3583213s
+Run 19: func-seed=20260420, lwe-noise-seed=54339, lwe-a-seed=314177, correct=true, noise mean=2.5000, noise std=13.5831, max|.|=32, online=17.7649355s
+Run 20: func-seed=20260421, lwe-noise-seed=54340, lwe-a-seed=314178, correct=true, noise mean=10.8125, noise std=7.9468, max|.|=30, online=17.8975791s
+Run 21: func-seed=20260422, lwe-noise-seed=54341, lwe-a-seed=314179, correct=true, noise mean=7.5625, noise std=11.1241, max|.|=25, online=18.1194922s
+Run 22: func-seed=20260423, lwe-noise-seed=54342, lwe-a-seed=314180, correct=true, noise mean=9.5625, noise std=13.2852, max|.|=32, online=17.7694342s
+Run 23: func-seed=20260424, lwe-noise-seed=54343, lwe-a-seed=314181, correct=true, noise mean=8.0625, noise std=16.6000, max|.|=39, online=18.4512895s
+Run 24: func-seed=20260425, lwe-noise-seed=54344, lwe-a-seed=314182, correct=true, noise mean=6.9375, noise std=9.5294, max|.|=32, online=18.1601459s
+Run 25: func-seed=20260426, lwe-noise-seed=54345, lwe-a-seed=314183, correct=true, noise mean=7.9375, noise std=13.8811, max|.|=34, online=17.9867687s
+Run 26: func-seed=20260427, lwe-noise-seed=54346, lwe-a-seed=314184, correct=true, noise mean=8.5625, noise std=10.9998, max|.|=29, online=18.2083176s
+Run 27: func-seed=20260428, lwe-noise-seed=54347, lwe-a-seed=314185, correct=true, noise mean=9.0000, noise std=10.5297, max|.|=25, online=17.889039s
+Run 28: func-seed=20260429, lwe-noise-seed=54348, lwe-a-seed=314186, correct=true, noise mean=5.7500, noise std=12.1011, max|.|=33, online=18.1500334s
+Run 29: func-seed=20260430, lwe-noise-seed=54349, lwe-a-seed=314187, correct=true, noise mean=5.3125, noise std=13.6277, max|.|=27, online=18.1180185s
+Run 30: func-seed=20260431, lwe-noise-seed=54350, lwe-a-seed=314188, correct=true, noise mean=9.3125, noise std=14.9027, max|.|=31, online=17.8535271s
+Run 31: func-seed=20260432, lwe-noise-seed=54351, lwe-a-seed=314189, correct=true, noise mean=3.8125, noise std=11.4030, max|.|=19, online=18.2252505s
+Run 32: func-seed=20260433, lwe-noise-seed=54352, lwe-a-seed=314190, correct=true, noise mean=2.0000, noise std=12.7818, max|.|=31, online=17.9719488s
+Run 33: func-seed=20260434, lwe-noise-seed=54353, lwe-a-seed=314191, correct=true, noise mean=7.5000, noise std=13.7250, max|.|=33, online=18.3292353s
+Run 34: func-seed=20260435, lwe-noise-seed=54354, lwe-a-seed=314192, correct=true, noise mean=5.4375, noise std=11.2526, max|.|=26, online=18.4014723s
+Run 35: func-seed=20260436, lwe-noise-seed=54355, lwe-a-seed=314193, correct=true, noise mean=7.8125, noise std=7.1521, max|.|=23, online=18.3163025s
+Run 36: func-seed=20260437, lwe-noise-seed=54356, lwe-a-seed=314194, correct=true, noise mean=7.9375, noise std=10.8885, max|.|=32, online=18.3088202s
+Run 37: func-seed=20260438, lwe-noise-seed=54357, lwe-a-seed=314195, correct=true, noise mean=5.0000, noise std=11.8269, max|.|=30, online=17.99876s
+Run 38: func-seed=20260439, lwe-noise-seed=54358, lwe-a-seed=314196, correct=true, noise mean=7.8750, noise std=10.4096, max|.|=27, online=17.6737168s
+Run 39: func-seed=20260440, lwe-noise-seed=54359, lwe-a-seed=314197, correct=true, noise mean=3.7500, noise std=14.2500, max|.|=30, online=18.4260017s
+Run 40: func-seed=20260441, lwe-noise-seed=54360, lwe-a-seed=314198, correct=true, noise mean=4.4375, noise std=8.5584, max|.|=17, online=17.9129414s
+Run 41: func-seed=20260442, lwe-noise-seed=54361, lwe-a-seed=314199, correct=true, noise mean=8.4375, noise std=8.8457, max|.|=26, online=18.0678608s
+Run 42: func-seed=20260443, lwe-noise-seed=54362, lwe-a-seed=314200, correct=true, noise mean=12.8125, noise std=13.0107, max|.|=41, online=18.1288725s
+Run 43: func-seed=20260444, lwe-noise-seed=54363, lwe-a-seed=314201, correct=true, noise mean=4.2500, noise std=13.6496, max|.|=36, online=17.7975263s
+Run 44: func-seed=20260445, lwe-noise-seed=54364, lwe-a-seed=314202, correct=true, noise mean=3.3750, noise std=13.7517, max|.|=37, online=18.2508126s
+Run 45: func-seed=20260446, lwe-noise-seed=54365, lwe-a-seed=314203, correct=true, noise mean=9.8125, noise std=14.6723, max|.|=42, online=18.0163905s
+Run 46: func-seed=20260447, lwe-noise-seed=54366, lwe-a-seed=314204, correct=true, noise mean=6.6250, noise std=12.3485, max|.|=36, online=17.852622s
+Run 47: func-seed=20260448, lwe-noise-seed=54367, lwe-a-seed=314205, correct=true, noise mean=6.2500, noise std=12.8671, max|.|=32, online=18.2525252s
+Run 48: func-seed=20260449, lwe-noise-seed=54368, lwe-a-seed=314206, correct=true, noise mean=10.6875, noise std=9.6353, max|.|=27, online=17.719864s
+Run 49: func-seed=20260450, lwe-noise-seed=54369, lwe-a-seed=314207, correct=true, noise mean=7.3750, noise std=11.2187, max|.|=26, online=18.053673s
+Run 50: func-seed=20260451, lwe-noise-seed=54370, lwe-a-seed=314208, correct=true, noise mean=7.1250, noise std=12.9898, max|.|=31, online=18.2223218s
+Run 51: func-seed=20260452, lwe-noise-seed=54371, lwe-a-seed=314209, correct=true, noise mean=5.0625, noise std=9.2498, max|.|=28, online=17.7533745s
+Run 52: func-seed=20260453, lwe-noise-seed=54372, lwe-a-seed=314210, correct=true, noise mean=5.4375, noise std=6.8462, max|.|=15, online=18.0952922s
+Run 53: func-seed=20260454, lwe-noise-seed=54373, lwe-a-seed=314211, correct=true, noise mean=7.7500, noise std=11.7340, max|.|=28, online=17.7896459s
+Run 54: func-seed=20260455, lwe-noise-seed=54374, lwe-a-seed=314212, correct=true, noise mean=7.0000, noise std=9.4934, max|.|=19, online=17.7930336s
+Run 55: func-seed=20260456, lwe-noise-seed=54375, lwe-a-seed=314213, correct=true, noise mean=7.7500, noise std=11.3935, max|.|=28, online=18.3916322s
+Run 56: func-seed=20260457, lwe-noise-seed=54376, lwe-a-seed=314214, correct=true, noise mean=9.4375, noise std=11.9267, max|.|=35, online=17.9047933s
+Run 57: func-seed=20260458, lwe-noise-seed=54377, lwe-a-seed=314215, correct=true, noise mean=6.0625, noise std=11.6751, max|.|=29, online=18.0186879s
+Run 58: func-seed=20260459, lwe-noise-seed=54378, lwe-a-seed=314216, correct=true, noise mean=7.5000, noise std=13.4350, max|.|=26, online=18.1584857s
+Run 59: func-seed=20260460, lwe-noise-seed=54379, lwe-a-seed=314217, correct=true, noise mean=7.8750, noise std=13.0282, max|.|=34, online=17.8098287s
+Run 60: func-seed=20260461, lwe-noise-seed=54380, lwe-a-seed=314218, correct=true, noise mean=5.3750, noise std=16.6541, max|.|=34, online=18.2763924s
+Run 61: func-seed=20260462, lwe-noise-seed=54381, lwe-a-seed=314219, correct=true, noise mean=6.1875, noise std=14.0233, max|.|=35, online=18.0238919s
+Run 62: func-seed=20260463, lwe-noise-seed=54382, lwe-a-seed=314220, correct=true, noise mean=9.8125, noise std=11.4358, max|.|=32, online=17.9826459s
+Run 63: func-seed=20260464, lwe-noise-seed=54383, lwe-a-seed=314221, correct=true, noise mean=6.6250, noise std=10.9879, max|.|=22, online=18.2688152s
+Run 64: func-seed=20260465, lwe-noise-seed=54384, lwe-a-seed=314222, correct=true, noise mean=9.0625, noise std=9.6661, max|.|=24, online=17.8343748s
+Run 65: func-seed=20260466, lwe-noise-seed=54385, lwe-a-seed=314223, correct=true, noise mean=6.5000, noise std=11.0340, max|.|=20, online=18.204659s
+Run 66: func-seed=20260467, lwe-noise-seed=54386, lwe-a-seed=314224, correct=true, noise mean=2.5000, noise std=15.0707, max|.|=29, online=18.1585121s
+Run 67: func-seed=20260468, lwe-noise-seed=54387, lwe-a-seed=314225, correct=true, noise mean=6.4375, noise std=10.2650, max|.|=23, online=17.7183743s
+Run 68: func-seed=20260469, lwe-noise-seed=54388, lwe-a-seed=314226, correct=true, noise mean=9.8750, noise std=8.0224, max|.|=19, online=18.0096345s
+Run 69: func-seed=20260470, lwe-noise-seed=54389, lwe-a-seed=314227, correct=true, noise mean=9.1250, noise std=11.6719, max|.|=37, online=17.70006s
+Run 70: func-seed=20260471, lwe-noise-seed=54390, lwe-a-seed=314228, correct=true, noise mean=6.1250, noise std=11.4612, max|.|=33, online=17.8413725s
+Run 71: func-seed=20260472, lwe-noise-seed=54391, lwe-a-seed=314229, correct=true, noise mean=10.9375, noise std=12.8134, max|.|=27, online=18.2717053s
+Run 72: func-seed=20260473, lwe-noise-seed=54392, lwe-a-seed=314230, correct=true, noise mean=6.1875, noise std=15.5572, max|.|=47, online=17.8350851s
+Run 73: func-seed=20260474, lwe-noise-seed=54393, lwe-a-seed=314231, correct=true, noise mean=10.2500, noise std=13.0264, max|.|=31, online=18.1556823s
+Run 74: func-seed=20260475, lwe-noise-seed=54394, lwe-a-seed=314232, correct=true, noise mean=6.4375, noise std=10.1055, max|.|=27, online=18.0029426s
+Run 75: func-seed=20260476, lwe-noise-seed=54395, lwe-a-seed=314233, correct=true, noise mean=9.3750, noise std=9.2997, max|.|=25, online=17.6582528s
+Run 76: func-seed=20260477, lwe-noise-seed=54396, lwe-a-seed=314234, correct=true, noise mean=8.1875, noise std=5.0648, max|.|=20, online=18.3185388s
+Run 77: func-seed=20260478, lwe-noise-seed=54397, lwe-a-seed=314235, correct=true, noise mean=5.0000, noise std=14.7775, max|.|=32, online=17.8803029s
+Run 78: func-seed=20260479, lwe-noise-seed=54398, lwe-a-seed=314236, correct=true, noise mean=5.4375, noise std=12.9179, max|.|=19, online=18.0588879s
+Run 79: func-seed=20260480, lwe-noise-seed=54399, lwe-a-seed=314237, correct=true, noise mean=5.5625, noise std=11.0225, max|.|=23, online=18.2088435s
+Run 80: func-seed=20260481, lwe-noise-seed=54400, lwe-a-seed=314238, correct=true, noise mean=9.5625, noise std=8.6384, max|.|=23, online=17.780571s
+Run 81: func-seed=20260482, lwe-noise-seed=54401, lwe-a-seed=314239, correct=true, noise mean=1.6250, noise std=11.0616, max|.|=23, online=18.2860145s
+Run 82: func-seed=20260483, lwe-noise-seed=54402, lwe-a-seed=314240, correct=true, noise mean=8.7500, noise std=12.4875, max|.|=36, online=18.1518705s
+Run 83: func-seed=20260484, lwe-noise-seed=54403, lwe-a-seed=314241, correct=true, noise mean=4.6250, noise std=14.7304, max|.|=44, online=17.8518841s
+Run 84: func-seed=20260485, lwe-noise-seed=54404, lwe-a-seed=314242, correct=true, noise mean=7.8750, noise std=15.0411, max|.|=41, online=18.2702462s
+Run 85: func-seed=20260486, lwe-noise-seed=54405, lwe-a-seed=314243, correct=true, noise mean=9.7500, noise std=11.8717, max|.|=29, online=17.8054989s
+Run 86: func-seed=20260487, lwe-noise-seed=54406, lwe-a-seed=314244, correct=true, noise mean=8.5000, noise std=11.6619, max|.|=31, online=18.1182897s
+Run 87: func-seed=20260488, lwe-noise-seed=54407, lwe-a-seed=314245, correct=true, noise mean=3.1250, noise std=15.4186, max|.|=30, online=18.4271925s
+Run 88: func-seed=20260489, lwe-noise-seed=54408, lwe-a-seed=314246, correct=true, noise mean=13.7500, noise std=12.9542, max|.|=33, online=17.9463343s
+Run 89: func-seed=20260490, lwe-noise-seed=54409, lwe-a-seed=314247, correct=true, noise mean=6.6875, noise std=11.0890, max|.|=22, online=18.496364s
+Run 90: func-seed=20260491, lwe-noise-seed=54410, lwe-a-seed=314248, correct=true, noise mean=10.9375, noise std=12.4973, max|.|=42, online=18.1217746s
+Run 91: func-seed=20260492, lwe-noise-seed=54411, lwe-a-seed=314249, correct=true, noise mean=3.8125, noise std=9.5539, max|.|=20, online=17.9588605s
+Run 92: func-seed=20260493, lwe-noise-seed=54412, lwe-a-seed=314250, correct=true, noise mean=9.5000, noise std=14.8366, max|.|=36, online=18.3126475s
+Run 93: func-seed=20260494, lwe-noise-seed=54413, lwe-a-seed=314251, correct=true, noise mean=5.2500, noise std=8.4224, max|.|=18, online=17.827521s
+Run 94: func-seed=20260495, lwe-noise-seed=54414, lwe-a-seed=314252, correct=true, noise mean=10.8125, noise std=11.0523, max|.|=33, online=18.0695455s
+Run 95: func-seed=20260496, lwe-noise-seed=54415, lwe-a-seed=314253, correct=true, noise mean=6.3125, noise std=10.8669, max|.|=25, online=18.1365421s
+Run 96: func-seed=20260497, lwe-noise-seed=54416, lwe-a-seed=314254, correct=true, noise mean=7.8750, noise std=9.3466, max|.|=27, online=17.7226771s
+Run 97: func-seed=20260498, lwe-noise-seed=54417, lwe-a-seed=314255, correct=true, noise mean=5.7500, noise std=11.9295, max|.|=28, online=18.3795105s
+Run 98: func-seed=20260499, lwe-noise-seed=54418, lwe-a-seed=314256, correct=true, noise mean=9.6250, noise std=15.2187, max|.|=35, online=17.8628172s
+Run 99: func-seed=20260500, lwe-noise-seed=54419, lwe-a-seed=314257, correct=true, noise mean=8.6875, noise std=12.7658, max|.|=23, online=17.9056226s
+Run 100: func-seed=20260501, lwe-noise-seed=54420, lwe-a-seed=314258, correct=true, noise mean=5.9375, noise std=9.5425, max|.|=20, online=18.2170632s
+=====================================
+
+========== Aggregated Summary ==========
+runs                       : 100
+all runs correct           : true
+average dynamic setup      : 3.528970152s
+  - fresh LWE ciphertexts  : 469.656µs
+  - function table         : 404.554µs
+  - LUT build              : 3.528095942s
+  - poly plaintext prep    : 0s
+average online total       : 18.072756834s
+  - pack LWE->BFV          : 2.550613525s
+  - poly eval total        : 15.339518654s
+    · build basis/powers   : 4.246644608s
+    · square x^(r/2)       : 120.343913ms
+    · build grouped powers : 1.4825158s
+    · ParallelLT           : 9.275645052s
+      · LT matrix build    : 124.909089ms
+      · hoisted decompose  : 4.961567ms
+      · baby rotations     : 512.701125ms
+      · giant rotations    : 731.830917ms
+      · pt-ct multiplies   : 5.536037057s
+      · first-stage other  : 2.227217947s
+      · second stage       : 0s
+      · post-process       : 17.147656ms
+      · post-LT rescale    : 0s
+      · other residual     : 120.839694ms
+    · pointwise multiply   : 20.494884ms
+    · rotate-and-sum       : 157.663852ms
+    · x^d / power gen      : 27.658497ms
+    · outer combine        : 0s
+    · leading term         : 7.370819ms
+    · final add            : 1.077062ms
+  - SlotToCoeff            : 117.733965ms
+  - BFV-side key switch    : 29.611711ms
+  - correction mul         : 143.894µs
+  - external mod switch    : 35.083722ms
+  - sample extraction      : 51.363µs
+noise mean (all samples)   : 7.1625
+noise std dev (all samples): 12.1785
+max |noise| (all samples)  : 47
+total wall time            : 38m2.6266885s
+========================================
+
+$ go run .   -N 65536 -m 32 -n 2048 -d 4194303 -func random   -logq "52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,30"   -logp "55,55,55,55,55,55" -T 2752513 -p 16384 -run 100 -final-ks-level-p=-1 -final-ks-pow2-base=1
+========== BFV Parameters ==========
+N                         : 65536
+m                         : 32
+n (LWE dimension)         : 2048
+input degree d            : 4194303
+degree mode               : d+1 power-of-two path
+internal eval degree      : 4194304
+poly-eval algorithm       : alg5
+poly LT baby steps        : auto
+poly LT giant steps       : auto
+plaintext modulus T       : 2752513
+message modulus p         : 16384
+alpha=floor(T/p)          : 168
+MaxLevel                  : 26
+LogQ bits                 : [52 52 52 52 52 52 52 52 52 52 52 52 52 52 52 52 52 52 52 52 52 52 52 52 52 52 30]
+LogP bits                 : [55 55 55 55 55 55]
+Q factors                 : [4503599627763713 4503599626321921 4503599628943361 4503599625535489 4503599629467649 4503599625404417 4503599631433729 4503599623045121 4503599632613377 4503599621472257 4503599634579457 4503599635628033 4503599619112961 4503599637200897 4503599615311873 4503599640477697 4503599641526273 4503599613214721 4503599642836993 4503599643885569 4503599645065217 4503599647817729 4503599607840769 4503599606661121 4503599651094529 4503599605350401 1073872897]
+P factors                 : [36028797019488257 36028797023420417 36028797014376449 36028797024206849 36028797013327873 36028797025124353]
+====================================
+
+---------- One-time preprocessing ----------
+SlotToCoeff basis         : 38.7705ms
+SlotToCoeff diagonals     : 4.998ms
+SlotToCoeff plaintexts    : 524.1143ms
+key generation            : 3.6628518s
+encrypted secret blocks   : 56.0604ms
+target secret build       : 30.2929ms
+evaluation-key generation : 142.3599ms
+poly-eval Galois keys     : 64
+SlotToCoeff rotations     : 10
+packing Galois keys       : 12
+distinct Galois keys total: 73
+leveled rotation keys     : true
+rotation level plan       : pack=25, polyPower=13, polyGrouped=2, polyLT-in=2, polyLT-out=2, final-sum=1, poly-out=1
+rotation keys total size  : 2.25 GiB (2414915328 bytes)
+  - LevelQ=0 (#Q=1, logQ≈53 bits): 5 keys, 35.00 MiB (36701120 bytes)
+  - LevelQ=1 (#Q=2, logQ≈104 bits): 5 keys, 40.00 MiB (41944080 bytes)
+  - LevelQ=2 (#Q=3, logQ≈157 bits): 52 keys, 468.01 MiB (490745216 bytes)
+  - LevelQ=25 (#Q=26, logQ≈1353 bits): 11 keys, 1.72 GiB (1845524912 bytes)
+relinearization key size  : 165.00 MiB (173017936 bytes)
+final key-switch key level: LevelQ=0 (#Q=1, logQ≈53 bits), LevelP=-1 (no P)
+final key-switch pow2 base: 2^1
+final key-switch params   : Q-only parameter view, PCount=0
+final key-switch key size : 52.00 MiB (54528888 bytes)
+auxiliary keys total size : 2.46 GiB (2642462152 bytes)
+encrypted secret size     : 27.00 MiB (28312286 bytes)
+one-time preprocessing    : 4.5800593s
+--------------------------------------------
+
+[progress +4.642s] run 1/100: dynamic setup
+[progress +23.004s] run 2/100: dynamic setup
+[progress +41.411s] run 3/100: dynamic setup
+[progress +1m0.163s] run 4/100: dynamic setup
+[progress +1m18.41s] run 5/100: dynamic setup
+[progress +1m36.956s] run 6/100: dynamic setup
+[progress +1m55.792s] run 7/100: dynamic setup
+[progress +2m14.247s] run 8/100: dynamic setup
+[progress +2m32.774s] run 9/100: dynamic setup
+[progress +2m51.553s] run 10/100: dynamic setup
+[progress +3m10.303s] run 11/100: dynamic setup
+[progress +3m28.72s] run 12/100: dynamic setup
+[progress +3m47.432s] run 13/100: dynamic setup
+[progress +4m6.196s] run 14/100: dynamic setup
+[progress +4m24.638s] run 15/100: dynamic setup
+[progress +4m43.286s] run 16/100: dynamic setup
+[progress +5m2.074s] run 17/100: dynamic setup
+[progress +5m20.472s] run 18/100: dynamic setup
+[progress +5m38.984s] run 19/100: dynamic setup
+[progress +5m57.813s] run 20/100: dynamic setup
+[progress +6m16.146s] run 21/100: dynamic setup
+[progress +6m34.542s] run 22/100: dynamic setup
+[progress +6m53.192s] run 23/100: dynamic setup
+[progress +7m11.565s] run 24/100: dynamic setup
+[progress +7m29.782s] run 25/100: dynamic setup
+[progress +7m48.578s] run 26/100: dynamic setup
+[progress +8m7.23s] run 27/100: dynamic setup
+[progress +8m25.684s] run 28/100: dynamic setup
+[progress +8m44.345s] run 29/100: dynamic setup
+[progress +9m2.957s] run 30/100: dynamic setup
+[progress +9m21.131s] run 31/100: dynamic setup
+[progress +9m39.643s] run 32/100: dynamic setup
+[progress +9m58.345s] run 33/100: dynamic setup
+[progress +10m16.659s] run 34/100: dynamic setup
+[progress +10m35.062s] run 35/100: dynamic setup
+[progress +10m53.731s] run 36/100: dynamic setup
+[progress +11m12.163s] run 37/100: dynamic setup
+[progress +11m30.462s] run 38/100: dynamic setup
+[progress +11m49.294s] run 39/100: dynamic setup
+[progress +12m7.821s] run 40/100: dynamic setup
+[progress +12m26.063s] run 41/100: dynamic setup
+[progress +12m44.518s] run 42/100: dynamic setup
+[progress +13m3.058s] run 43/100: dynamic setup
+[progress +13m21.239s] run 44/100: dynamic setup
+[progress +13m39.787s] run 45/100: dynamic setup
+[progress +13m58.534s] run 46/100: dynamic setup
+[progress +14m16.931s] run 47/100: dynamic setup
+[progress +14m35.473s] run 48/100: dynamic setup
+[progress +14m54.141s] run 49/100: dynamic setup
+[progress +15m12.56s] run 50/100: dynamic setup
+[progress +15m30.801s] run 51/100: dynamic setup
+[progress +15m49.474s] run 52/100: dynamic setup
+[progress +16m7.995s] run 53/100: dynamic setup
+[progress +16m26.24s] run 54/100: dynamic setup
+[progress +16m44.764s] run 55/100: dynamic setup
+[progress +17m3.336s] run 56/100: dynamic setup
+[progress +17m21.483s] run 57/100: dynamic setup
+[progress +17m39.97s] run 58/100: dynamic setup
+[progress +17m58.655s] run 59/100: dynamic setup
+[progress +18m16.905s] run 60/100: dynamic setup
+[progress +18m35.241s] run 61/100: dynamic setup
+[progress +18m53.805s] run 62/100: dynamic setup
+[progress +19m12.016s] run 63/100: dynamic setup
+[progress +19m30.221s] run 64/100: dynamic setup
+[progress +19m49.004s] run 65/100: dynamic setup
+[progress +20m7.568s] run 66/100: dynamic setup
+[progress +20m25.845s] run 67/100: dynamic setup
+[progress +20m44.384s] run 68/100: dynamic setup
+[progress +21m3s] run 69/100: dynamic setup
+[progress +21m21.243s] run 70/100: dynamic setup
+[progress +21m39.694s] run 71/100: dynamic setup
+[progress +21m58.279s] run 72/100: dynamic setup
+[progress +22m16.631s] run 73/100: dynamic setup
+[progress +22m35.045s] run 74/100: dynamic setup
+[progress +22m53.7s] run 75/100: dynamic setup
+[progress +23m12.14s] run 76/100: dynamic setup
+[progress +23m30.383s] run 77/100: dynamic setup
+[progress +23m49.157s] run 78/100: dynamic setup
+[progress +24m7.621s] run 79/100: dynamic setup
+[progress +24m25.877s] run 80/100: dynamic setup
+[progress +24m44.472s] run 81/100: dynamic setup
+[progress +25m3.012s] run 82/100: dynamic setup
+[progress +25m21.304s] run 83/100: dynamic setup
+[progress +25m39.881s] run 84/100: dynamic setup
+[progress +25m58.704s] run 85/100: dynamic setup
+[progress +26m17.144s] run 86/100: dynamic setup
+[progress +26m35.684s] run 87/100: dynamic setup
+[progress +26m54.411s] run 88/100: dynamic setup
+[progress +27m12.763s] run 89/100: dynamic setup
+[progress +27m31.071s] run 90/100: dynamic setup
+[progress +27m49.798s] run 91/100: dynamic setup
+[progress +28m8.34s] run 92/100: dynamic setup
+[progress +28m26.662s] run 93/100: dynamic setup
+[progress +28m45.279s] run 94/100: dynamic setup
+[progress +29m3.852s] run 95/100: dynamic setup
+[progress +29m22.038s] run 96/100: dynamic setup
+[progress +29m40.61s] run 97/100: dynamic setup
+[progress +29m59.368s] run 98/100: dynamic setup
+[progress +30m17.692s] run 99/100: dynamic setup
+[progress +30m36.045s] run 100/100: dynamic setup
+========== Per-run Summary ==========
+Run 1: func-seed=20260402, lwe-noise-seed=54321, lwe-a-seed=314159, correct=true, noise mean=-3.0938, noise std=9.2038, max|.|=25, online=16.581681s
+Run 2: func-seed=20260403, lwe-noise-seed=54322, lwe-a-seed=314160, correct=true, noise mean=-1.2812, noise std=8.9486, max|.|=25, online=16.8244742s
+Run 3: func-seed=20260404, lwe-noise-seed=54323, lwe-a-seed=314161, correct=true, noise mean=-3.4375, noise std=11.2803, max|.|=26, online=17.0603646s
+Run 4: func-seed=20260405, lwe-noise-seed=54324, lwe-a-seed=314162, correct=true, noise mean=-1.8750, noise std=11.5779, max|.|=26, online=16.632497s
+Run 5: func-seed=20260406, lwe-noise-seed=54325, lwe-a-seed=314163, correct=true, noise mean=-4.6875, noise std=8.4943, max|.|=22, online=16.9345998s
+Run 6: func-seed=20260407, lwe-noise-seed=54326, lwe-a-seed=314164, correct=true, noise mean=-1.9062, noise std=9.6221, max|.|=21, online=17.213453s
+Run 7: func-seed=20260408, lwe-noise-seed=54327, lwe-a-seed=314165, correct=true, noise mean=-3.1562, noise std=10.2351, max|.|=25, online=16.8327084s
+Run 8: func-seed=20260409, lwe-noise-seed=54328, lwe-a-seed=314166, correct=true, noise mean=-0.8750, noise std=8.1844, max|.|=16, online=16.9129535s
+Run 9: func-seed=20260410, lwe-noise-seed=54329, lwe-a-seed=314167, correct=true, noise mean=1.5938, noise std=9.8421, max|.|=25, online=17.1538564s
+Run 10: func-seed=20260411, lwe-noise-seed=54330, lwe-a-seed=314168, correct=true, noise mean=1.0312, noise std=10.0171, max|.|=21, online=17.116657s
+Run 11: func-seed=20260412, lwe-noise-seed=54331, lwe-a-seed=314169, correct=true, noise mean=-0.9688, noise std=9.3958, max|.|=19, online=16.7982413s
+Run 12: func-seed=20260413, lwe-noise-seed=54332, lwe-a-seed=314170, correct=true, noise mean=2.7812, noise std=9.7299, max|.|=24, online=17.0853935s
+Run 13: func-seed=20260414, lwe-noise-seed=54333, lwe-a-seed=314171, correct=true, noise mean=0.2188, noise std=9.5908, max|.|=20, online=17.105293s
+Run 14: func-seed=20260415, lwe-noise-seed=54334, lwe-a-seed=314172, correct=true, noise mean=0.4375, noise std=11.9450, max|.|=26, online=16.8008086s
+Run 15: func-seed=20260416, lwe-noise-seed=54335, lwe-a-seed=314173, correct=true, noise mean=-0.1875, noise std=11.5337, max|.|=27, online=17.0293053s
+Run 16: func-seed=20260417, lwe-noise-seed=54336, lwe-a-seed=314174, correct=true, noise mean=-1.0625, noise std=9.1547, max|.|=18, online=17.1502163s
+Run 17: func-seed=20260418, lwe-noise-seed=54337, lwe-a-seed=314175, correct=true, noise mean=-1.5938, noise std=11.5620, max|.|=26, online=16.785411s
+Run 18: func-seed=20260419, lwe-noise-seed=54338, lwe-a-seed=314176, correct=true, noise mean=-1.2812, noise std=9.5794, max|.|=22, online=16.8955047s
+Run 19: func-seed=20260420, lwe-noise-seed=54339, lwe-a-seed=314177, correct=true, noise mean=2.1562, noise std=10.7154, max|.|=25, online=17.2158268s
+Run 20: func-seed=20260421, lwe-noise-seed=54340, lwe-a-seed=314178, correct=true, noise mean=-2.0312, noise std=12.0325, max|.|=26, online=16.7246473s
+Run 21: func-seed=20260422, lwe-noise-seed=54341, lwe-a-seed=314179, correct=true, noise mean=-2.7188, noise std=11.6732, max|.|=27, online=16.7902717s
+Run 22: func-seed=20260423, lwe-noise-seed=54342, lwe-a-seed=314180, correct=true, noise mean=1.4688, noise std=11.2054, max|.|=27, online=17.0302967s
+Run 23: func-seed=20260424, lwe-noise-seed=54343, lwe-a-seed=314181, correct=true, noise mean=-2.5000, noise std=7.8978, max|.|=19, online=16.7393755s
+Run 24: func-seed=20260425, lwe-noise-seed=54344, lwe-a-seed=314182, correct=true, noise mean=4.7812, noise std=10.1850, max|.|=28, online=16.5915535s
+Run 25: func-seed=20260426, lwe-noise-seed=54345, lwe-a-seed=314183, correct=true, noise mean=-2.6562, noise std=9.1877, max|.|=19, online=17.1682373s
+Run 26: func-seed=20260427, lwe-noise-seed=54346, lwe-a-seed=314184, correct=true, noise mean=-0.8125, noise std=10.3454, max|.|=23, online=17.0139851s
+Run 27: func-seed=20260428, lwe-noise-seed=54347, lwe-a-seed=314185, correct=true, noise mean=1.8438, noise std=7.8824, max|.|=20, online=16.8322246s
+Run 28: func-seed=20260429, lwe-noise-seed=54348, lwe-a-seed=314186, correct=true, noise mean=-0.9062, noise std=9.5143, max|.|=26, online=17.0461117s
+Run 29: func-seed=20260430, lwe-noise-seed=54349, lwe-a-seed=314187, correct=true, noise mean=-0.6562, noise std=12.2286, max|.|=29, online=16.9836931s
+Run 30: func-seed=20260431, lwe-noise-seed=54350, lwe-a-seed=314188, correct=true, noise mean=-3.3750, noise std=10.9794, max|.|=28, online=16.5599482s
+Run 31: func-seed=20260432, lwe-noise-seed=54351, lwe-a-seed=314189, correct=true, noise mean=0.1250, noise std=9.2085, max|.|=22, online=16.894588s
+Run 32: func-seed=20260433, lwe-noise-seed=54352, lwe-a-seed=314190, correct=true, noise mean=-0.2188, noise std=8.4103, max|.|=18, online=17.0748596s
+Run 33: func-seed=20260434, lwe-noise-seed=54353, lwe-a-seed=314191, correct=true, noise mean=-2.3750, noise std=10.5260, max|.|=27, online=16.6958438s
+Run 34: func-seed=20260435, lwe-noise-seed=54354, lwe-a-seed=314192, correct=true, noise mean=-3.3750, noise std=10.6412, max|.|=28, online=16.7932958s
+Run 35: func-seed=20260436, lwe-noise-seed=54355, lwe-a-seed=314193, correct=true, noise mean=-2.6562, noise std=10.4331, max|.|=21, online=17.0487972s
+Run 36: func-seed=20260437, lwe-noise-seed=54356, lwe-a-seed=314194, correct=true, noise mean=-2.5312, noise std=11.6297, max|.|=25, online=16.8093456s
+Run 37: func-seed=20260438, lwe-noise-seed=54357, lwe-a-seed=314195, correct=true, noise mean=3.7812, noise std=10.2217, max|.|=24, online=16.674296s
+Run 38: func-seed=20260439, lwe-noise-seed=54358, lwe-a-seed=314196, correct=true, noise mean=-1.0938, noise std=11.0520, max|.|=26, online=17.2141954s
+Run 39: func-seed=20260440, lwe-noise-seed=54359, lwe-a-seed=314197, correct=true, noise mean=1.7188, noise std=9.8146, max|.|=24, online=16.902726s
+Run 40: func-seed=20260441, lwe-noise-seed=54360, lwe-a-seed=314198, correct=true, noise mean=0.6875, noise std=12.9215, max|.|=28, online=16.6092548s
+Run 41: func-seed=20260442, lwe-noise-seed=54361, lwe-a-seed=314199, correct=true, noise mean=1.3438, noise std=11.2767, max|.|=23, online=16.8436455s
+Run 42: func-seed=20260443, lwe-noise-seed=54362, lwe-a-seed=314200, correct=true, noise mean=-1.5000, noise std=10.0933, max|.|=22, online=16.8991159s
+Run 43: func-seed=20260444, lwe-noise-seed=54363, lwe-a-seed=314201, correct=true, noise mean=2.0000, noise std=10.9886, max|.|=25, online=16.5569742s
+Run 44: func-seed=20260445, lwe-noise-seed=54364, lwe-a-seed=314202, correct=true, noise mean=-1.6875, noise std=10.2513, max|.|=29, online=16.9415773s
+Run 45: func-seed=20260446, lwe-noise-seed=54365, lwe-a-seed=314203, correct=true, noise mean=-2.1875, noise std=9.7097, max|.|=26, online=17.1002448s
+Run 46: func-seed=20260447, lwe-noise-seed=54366, lwe-a-seed=314204, correct=true, noise mean=0.1250, noise std=10.8102, max|.|=27, online=16.771009s
+Run 47: func-seed=20260448, lwe-noise-seed=54367, lwe-a-seed=314205, correct=true, noise mean=-3.3438, noise std=11.4526, max|.|=28, online=16.9225316s
+Run 48: func-seed=20260449, lwe-noise-seed=54368, lwe-a-seed=314206, correct=true, noise mean=-1.0312, noise std=9.5180, max|.|=19, online=17.0430988s
+Run 49: func-seed=20260450, lwe-noise-seed=54369, lwe-a-seed=314207, correct=true, noise mean=-0.4375, noise std=9.6434, max|.|=25, online=16.7817273s
+Run 50: func-seed=20260451, lwe-noise-seed=54370, lwe-a-seed=314208, correct=true, noise mean=1.2500, noise std=11.8559, max|.|=33, online=16.6061733s
+Run 51: func-seed=20260452, lwe-noise-seed=54371, lwe-a-seed=314209, correct=true, noise mean=1.8438, noise std=10.8516, max|.|=25, online=17.0503267s
+Run 52: func-seed=20260453, lwe-noise-seed=54372, lwe-a-seed=314210, correct=true, noise mean=-2.5938, noise std=10.2465, max|.|=27, online=16.901526s
+Run 53: func-seed=20260454, lwe-noise-seed=54373, lwe-a-seed=314211, correct=true, noise mean=-0.2812, noise std=9.5336, max|.|=25, online=16.6306011s
+Run 54: func-seed=20260455, lwe-noise-seed=54374, lwe-a-seed=314212, correct=true, noise mean=-2.6250, noise std=11.7174, max|.|=35, online=16.910959s
+Run 55: func-seed=20260456, lwe-noise-seed=54375, lwe-a-seed=314213, correct=true, noise mean=-2.4375, noise std=9.3439, max|.|=30, online=16.9626864s
+Run 56: func-seed=20260457, lwe-noise-seed=54376, lwe-a-seed=314214, correct=true, noise mean=-2.0000, noise std=10.3290, max|.|=27, online=16.5359933s
+Run 57: func-seed=20260458, lwe-noise-seed=54377, lwe-a-seed=314215, correct=true, noise mean=-0.1562, noise std=9.7022, max|.|=19, online=16.8778021s
+Run 58: func-seed=20260459, lwe-noise-seed=54378, lwe-a-seed=314216, correct=true, noise mean=-4.7812, noise std=10.1758, max|.|=25, online=17.0650259s
+Run 59: func-seed=20260460, lwe-noise-seed=54379, lwe-a-seed=314217, correct=true, noise mean=1.0625, noise std=14.3960, max|.|=38, online=16.6280542s
+Run 60: func-seed=20260461, lwe-noise-seed=54380, lwe-a-seed=314218, correct=true, noise mean=-0.1875, noise std=11.9385, max|.|=24, online=16.7241184s
+Run 61: func-seed=20260462, lwe-noise-seed=54381, lwe-a-seed=314219, correct=true, noise mean=1.2188, noise std=9.4563, max|.|=22, online=16.9489922s
+Run 62: func-seed=20260463, lwe-noise-seed=54382, lwe-a-seed=314220, correct=true, noise mean=-3.1875, noise std=10.2452, max|.|=32, online=16.5867041s
+Run 63: func-seed=20260464, lwe-noise-seed=54383, lwe-a-seed=314221, correct=true, noise mean=-0.7188, noise std=11.7293, max|.|=24, online=16.5979704s
+Run 64: func-seed=20260465, lwe-noise-seed=54384, lwe-a-seed=314222, correct=true, noise mean=0.1875, noise std=8.1373, max|.|=18, online=17.1311346s
+Run 65: func-seed=20260466, lwe-noise-seed=54385, lwe-a-seed=314223, correct=true, noise mean=1.4688, noise std=8.9791, max|.|=19, online=16.9140251s
+Run 66: func-seed=20260467, lwe-noise-seed=54386, lwe-a-seed=314224, correct=true, noise mean=1.6562, noise std=10.3791, max|.|=27, online=16.6638376s
+Run 67: func-seed=20260468, lwe-noise-seed=54387, lwe-a-seed=314225, correct=true, noise mean=-3.9688, noise std=11.9908, max|.|=37, online=16.9194999s
+Run 68: func-seed=20260469, lwe-noise-seed=54388, lwe-a-seed=314226, correct=true, noise mean=0.2188, noise std=10.4125, max|.|=23, online=16.9995934s
+Run 69: func-seed=20260470, lwe-noise-seed=54389, lwe-a-seed=314227, correct=true, noise mean=-0.1250, noise std=11.9314, max|.|=23, online=16.6144296s
+Run 70: func-seed=20260471, lwe-noise-seed=54390, lwe-a-seed=314228, correct=true, noise mean=3.5312, noise std=13.3252, max|.|=32, online=16.8363751s
+Run 71: func-seed=20260472, lwe-noise-seed=54391, lwe-a-seed=314229, correct=true, noise mean=2.9688, noise std=9.2212, max|.|=27, online=16.9649983s
+Run 72: func-seed=20260473, lwe-noise-seed=54392, lwe-a-seed=314230, correct=true, noise mean=-1.6250, noise std=9.7428, max|.|=22, online=16.7259598s
+Run 73: func-seed=20260474, lwe-noise-seed=54393, lwe-a-seed=314231, correct=true, noise mean=1.9688, noise std=9.7612, max|.|=27, online=16.7866286s
+Run 74: func-seed=20260475, lwe-noise-seed=54394, lwe-a-seed=314232, correct=true, noise mean=3.7188, noise std=9.9538, max|.|=26, online=17.0296922s
+Run 75: func-seed=20260476, lwe-noise-seed=54395, lwe-a-seed=314233, correct=true, noise mean=0.9375, noise std=10.3891, max|.|=21, online=16.7777857s
+Run 76: func-seed=20260477, lwe-noise-seed=54396, lwe-a-seed=314234, correct=true, noise mean=2.1250, noise std=8.9678, max|.|=22, online=16.6122794s
+Run 77: func-seed=20260478, lwe-noise-seed=54397, lwe-a-seed=314235, correct=true, noise mean=0.2812, noise std=10.0163, max|.|=24, online=17.1375502s
+Run 78: func-seed=20260479, lwe-noise-seed=54398, lwe-a-seed=314236, correct=true, noise mean=1.9688, noise std=10.6639, max|.|=33, online=16.8415758s
+Run 79: func-seed=20260480, lwe-noise-seed=54399, lwe-a-seed=314237, correct=true, noise mean=2.0000, noise std=11.9713, max|.|=27, online=16.6446312s
+Run 80: func-seed=20260481, lwe-noise-seed=54400, lwe-a-seed=314238, correct=true, noise mean=0.5000, noise std=13.9486, max|.|=29, online=16.9740834s
+Run 81: func-seed=20260482, lwe-noise-seed=54401, lwe-a-seed=314239, correct=true, noise mean=-0.5000, noise std=10.0778, max|.|=22, online=16.9175342s
+Run 82: func-seed=20260483, lwe-noise-seed=54402, lwe-a-seed=314240, correct=true, noise mean=-1.1875, noise std=12.0661, max|.|=26, online=16.6849077s
+Run 83: func-seed=20260484, lwe-noise-seed=54403, lwe-a-seed=314241, correct=true, noise mean=-1.3750, noise std=10.7754, max|.|=19, online=16.9437997s
+Run 84: func-seed=20260485, lwe-noise-seed=54404, lwe-a-seed=314242, correct=true, noise mean=-0.5938, noise std=13.7701, max|.|=30, online=17.1942666s
+Run 85: func-seed=20260486, lwe-noise-seed=54405, lwe-a-seed=314243, correct=true, noise mean=-1.5000, noise std=9.6921, max|.|=20, online=16.7939145s
+Run 86: func-seed=20260487, lwe-noise-seed=54406, lwe-a-seed=314244, correct=true, noise mean=1.2812, noise std=9.3181, max|.|=23, online=16.9191011s
+Run 87: func-seed=20260488, lwe-noise-seed=54407, lwe-a-seed=314245, correct=true, noise mean=1.0625, noise std=10.1209, max|.|=37, online=17.0966457s
+Run 88: func-seed=20260489, lwe-noise-seed=54408, lwe-a-seed=314246, correct=true, noise mean=-3.2812, noise std=11.4816, max|.|=28, online=16.7254377s
+Run 89: func-seed=20260490, lwe-noise-seed=54409, lwe-a-seed=314247, correct=true, noise mean=1.9375, noise std=9.6726, max|.|=21, online=16.6784961s
+Run 90: func-seed=20260491, lwe-noise-seed=54410, lwe-a-seed=314248, correct=true, noise mean=-3.0625, noise std=10.3981, max|.|=24, online=17.0977863s
+Run 91: func-seed=20260492, lwe-noise-seed=54411, lwe-a-seed=314249, correct=true, noise mean=-2.2188, noise std=11.8999, max|.|=33, online=16.9179587s
+Run 92: func-seed=20260493, lwe-noise-seed=54412, lwe-a-seed=314250, correct=true, noise mean=-5.4062, noise std=10.6532, max|.|=33, online=16.7159668s
+Run 93: func-seed=20260494, lwe-noise-seed=54413, lwe-a-seed=314251, correct=true, noise mean=-4.3750, noise std=12.4065, max|.|=30, online=17.0054553s
+Run 94: func-seed=20260495, lwe-noise-seed=54414, lwe-a-seed=314252, correct=true, noise mean=-2.4062, noise std=9.6755, max|.|=28, online=16.9598886s
+Run 95: func-seed=20260496, lwe-noise-seed=54415, lwe-a-seed=314253, correct=true, noise mean=0.5312, noise std=11.5893, max|.|=32, online=16.5618013s
+Run 96: func-seed=20260497, lwe-noise-seed=54416, lwe-a-seed=314254, correct=true, noise mean=-1.0000, noise std=12.6738, max|.|=33, online=16.9430183s
+Run 97: func-seed=20260498, lwe-noise-seed=54417, lwe-a-seed=314255, correct=true, noise mean=-1.7188, noise std=10.6924, max|.|=23, online=17.1523651s
+Run 98: func-seed=20260499, lwe-noise-seed=54418, lwe-a-seed=314256, correct=true, noise mean=-1.0625, noise std=13.4767, max|.|=37, online=16.6897119s
+Run 99: func-seed=20260500, lwe-noise-seed=54419, lwe-a-seed=314257, correct=true, noise mean=0.0625, noise std=10.9514, max|.|=24, online=16.7427351s
+Run 100: func-seed=20260501, lwe-noise-seed=54420, lwe-a-seed=314258, correct=true, noise mean=-1.2500, noise std=10.9630, max|.|=24, online=17.0828569s
+=====================================
+
+========== Aggregated Summary ==========
+runs                       : 100
+all runs correct           : true
+average dynamic setup      : 585.079789ms
+  - fresh LWE ciphertexts  : 938.867µs
+  - function table         : 56.25µs
+  - LUT build              : 584.084672ms
+  - poly plaintext prep    : 0s
+average online total       : 16.876113773s
+  - pack LWE->BFV          : 2.100464245s
+  - poly eval total        : 14.484106287s
+    · build basis/powers   : 3.617863051s
+    · square x^(r/2)       : 106.819263ms
+    · build grouped powers : 1.480492059s
+    · ParallelLT           : 9.076293341s
+      · LT matrix build    : 36.139µs
+      · hoisted decompose  : 11.89994ms
+      · baby rotations     : 802.986267ms
+      · giant rotations    : 1.157424777s
+      · pt-ct multiplies   : 5.589489853s
+      · first-stage other  : 1.495269063s
+      · second stage       : 0s
+      · post-process       : 18.986695ms
+      · post-LT rescale    : 0s
+      · other residual     : 200.607µs
+    · pointwise multiply   : 23.168642ms
+    · rotate-and-sum       : 179.299528ms
+    · x^d / power gen      : 0s
+    · outer combine        : 0s
+    · leading term         : 0s
+    · final add            : 0s
+  - SlotToCoeff            : 228.608479ms
+  - BFV-side key switch    : 28.87625ms
+  - correction mul         : 55.076µs
+  - external mod switch    : 33.896642ms
+  - sample extraction      : 106.794µs
+noise mean (all samples)   : -0.5925
+noise std dev (all samples): 10.8440
+max |noise| (all samples)  : 38
+total wall time            : 30m54.7416142s
+========================================
+
+$ ./fb.exe -N 65536 -m 64 -n 2048 -d 1048575 -logq "52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,30"  -logp "55,55,55,55,55,55" -T 786433 -p 4096 -run 100 -final-ks-level-p=-1 -final-ks-pow2-base=1
+========== BFV Parameters ==========
+N                         : 65536
+m                         : 64
+n (LWE dimension)         : 2048
+input degree d            : 1048575
+degree mode               : d+1 power-of-two path
+internal eval degree      : 1048576
+poly-eval algorithm       : alg5
+poly LT baby steps        : auto
+poly LT giant steps       : auto
+plaintext modulus T       : 786433
+message modulus p         : 4096
+alpha=floor(T/p)          : 192
+MaxLevel                  : 25
+LogQ bits                 : [52 52 52 52 52 52 52 52 52 52 52 52 52 52 52 52 52 52 52 52 52 52 52 52 52 30]
+LogP bits                 : [55 55 55 55 55 55]
+Q factors                 : [4503599627763713 4503599626321921 4503599628943361 4503599625535489 4503599629467649 4503599625404417 4503599631433729 4503599623045121 4503599632613377 4503599621472257 4503599634579457 4503599635628033 4503599619112961 4503599637200897 4503599615311873 4503599640477697 4503599641526273 4503599613214721 4503599642836993 4503599643885569 4503599645065217 4503599647817729 4503599607840769 4503599606661121 4503599651094529 1073872897]
+P factors                 : [36028797019488257 36028797023420417 36028797014376449 36028797024206849 36028797013327873 36028797025124353]
+====================================
+
+---------- One-time preprocessing ----------
+SlotToCoeff basis         : 82.5794ms
+SlotToCoeff diagonals     : 5.0043ms
+SlotToCoeff plaintexts    : 1.0412097s
+key generation            : 3.2797022s
+encrypted secret blocks   : 108.6467ms
+target secret build       : 26.7571ms
+evaluation-key generation : 141.6916ms
+poly-eval Galois keys     : 50
+SlotToCoeff rotations     : 14
+packing Galois keys       : 11
+distinct Galois keys total: 63
+leveled rotation keys     : true
+rotation level plan       : pack=24, polyPower=13, polyGrouped=3, polyLT-in=3, polyLT-out=2, final-sum=1, poly-out=1
+rotation keys total size  : 2.00 GiB (2144377600 bytes)
+  - LevelQ=0 (#Q=1, logQ≈53 bits): 7 keys, 49.00 MiB (51381568 bytes)
+  - LevelQ=1 (#Q=2, logQ≈104 bits): 7 keys, 56.00 MiB (58721712 bytes)
+  - LevelQ=3 (#Q=4, logQ≈208 bits): 39 keys, 390.01 MiB (408954000 bytes)
+  - LevelQ=24 (#Q=25, logQ≈1301 bits): 10 keys, 1.51 GiB (1625320320 bytes)
+relinearization key size  : 160.00 MiB (167774976 bytes)
+final key-switch key level: LevelQ=0 (#Q=1, logQ≈53 bits), LevelP=-1 (no P)
+final key-switch pow2 base: 2^1
+final key-switch params   : Q-only parameter view, PCount=0
+final key-switch key size : 52.00 MiB (54528888 bytes)
+auxiliary keys total size : 2.20 GiB (2366681464 bytes)
+encrypted secret size     : 52.00 MiB (54527388 bytes)
+one-time preprocessing    : 4.7994225s
+--------------------------------------------
+
+[progress +4.858s] run 1/100: dynamic setup
+[progress +19.561s] run 2/100: dynamic setup
+[progress +34.031s] run 3/100: dynamic setup
+[progress +48.791s] run 4/100: dynamic setup
+[progress +1m3.368s] run 5/100: dynamic setup
+[progress +1m17.813s] run 6/100: dynamic setup
+[progress +1m32.416s] run 7/100: dynamic setup
+[progress +1m47.218s] run 8/100: dynamic setup
+[progress +2m1.777s] run 9/100: dynamic setup
+[progress +2m16.168s] run 10/100: dynamic setup
+[progress +2m30.712s] run 11/100: dynamic setup
+[progress +2m45.489s] run 12/100: dynamic setup
+[progress +3m0.15s] run 13/100: dynamic setup
+[progress +3m14.531s] run 14/100: dynamic setup
+[progress +3m29.119s] run 15/100: dynamic setup
+[progress +3m43.952s] run 16/100: dynamic setup
+[progress +3m58.619s] run 17/100: dynamic setup
+[progress +4m13.05s] run 18/100: dynamic setup
+[progress +4m27.528s] run 19/100: dynamic setup
+[progress +4m42.368s] run 20/100: dynamic setup
+[progress +4m57.141s] run 21/100: dynamic setup
+[progress +5m11.563s] run 22/100: dynamic setup
+[progress +5m26.003s] run 23/100: dynamic setup
+[progress +5m40.716s] run 24/100: dynamic setup
+[progress +5m55.295s] run 25/100: dynamic setup
+[progress +6m9.632s] run 26/100: dynamic setup
+[progress +6m24.005s] run 27/100: dynamic setup
+[progress +6m38.865s] run 28/100: dynamic setup
+[progress +6m53.709s] run 29/100: dynamic setup
+[progress +7m8.3s] run 30/100: dynamic setup
+[progress +7m22.817s] run 31/100: dynamic setup
+[progress +7m37.62s] run 32/100: dynamic setup
+[progress +7m52.469s] run 33/100: dynamic setup
+[progress +8m6.901s] run 34/100: dynamic setup
+[progress +8m21.261s] run 35/100: dynamic setup
+[progress +8m35.939s] run 36/100: dynamic setup
+[progress +8m50.715s] run 37/100: dynamic setup
+[progress +9m5.244s] run 38/100: dynamic setup
+[progress +9m19.765s] run 39/100: dynamic setup
+[progress +9m34.511s] run 40/100: dynamic setup
+[progress +9m49.307s] run 41/100: dynamic setup
+[progress +10m3.798s] run 42/100: dynamic setup
+[progress +10m18.256s] run 43/100: dynamic setup
+[progress +10m32.934s] run 44/100: dynamic setup
+[progress +10m47.773s] run 45/100: dynamic setup
+[progress +11m2.361s] run 46/100: dynamic setup
+[progress +11m16.823s] run 47/100: dynamic setup
+[progress +11m31.455s] run 48/100: dynamic setup
+[progress +11m46.224s] run 49/100: dynamic setup
+[progress +12m0.792s] run 50/100: dynamic setup
+[progress +12m15.226s] run 51/100: dynamic setup
+[progress +12m29.812s] run 52/100: dynamic setup
+[progress +12m44.7s] run 53/100: dynamic setup
+[progress +12m59.471s] run 54/100: dynamic setup
+[progress +13m14.043s] run 55/100: dynamic setup
+[progress +13m28.654s] run 56/100: dynamic setup
+[progress +13m43.491s] run 57/100: dynamic setup
+[progress +13m58.212s] run 58/100: dynamic setup
+[progress +14m12.613s] run 59/100: dynamic setup
+[progress +14m27.059s] run 60/100: dynamic setup
+[progress +14m41.919s] run 61/100: dynamic setup
+[progress +14m56.707s] run 62/100: dynamic setup
+[progress +15m11.151s] run 63/100: dynamic setup
+[progress +15m25.722s] run 64/100: dynamic setup
+[progress +15m40.54s] run 65/100: dynamic setup
+[progress +15m55.417s] run 66/100: dynamic setup
+[progress +16m9.878s] run 67/100: dynamic setup
+[progress +16m24.395s] run 68/100: dynamic setup
+[progress +16m39.227s] run 69/100: dynamic setup
+[progress +16m54.123s] run 70/100: dynamic setup
+[progress +17m8.551s] run 71/100: dynamic setup
+[progress +17m22.955s] run 72/100: dynamic setup
+[progress +17m37.67s] run 73/100: dynamic setup
+[progress +17m52.475s] run 74/100: dynamic setup
+[progress +18m6.949s] run 75/100: dynamic setup
+[progress +18m21.357s] run 76/100: dynamic setup
+[progress +18m36.181s] run 77/100: dynamic setup
+[progress +18m51.021s] run 78/100: dynamic setup
+[progress +19m5.628s] run 79/100: dynamic setup
+[progress +19m20.188s] run 80/100: dynamic setup
+[progress +19m34.983s] run 81/100: dynamic setup
+[progress +19m49.819s] run 82/100: dynamic setup
+[progress +20m4.327s] run 83/100: dynamic setup
+[progress +20m18.677s] run 84/100: dynamic setup
+[progress +20m33.339s] run 85/100: dynamic setup
+[progress +20m48.224s] run 86/100: dynamic setup
+[progress +21m2.867s] run 87/100: dynamic setup
+[progress +21m17.373s] run 88/100: dynamic setup
+[progress +21m32.028s] run 89/100: dynamic setup
+[progress +21m46.862s] run 90/100: dynamic setup
+[progress +22m1.522s] run 91/100: dynamic setup
+[progress +22m15.994s] run 92/100: dynamic setup
+[progress +22m30.569s] run 93/100: dynamic setup
+[progress +22m45.437s] run 94/100: dynamic setup
+[progress +23m0.175s] run 95/100: dynamic setup
+[progress +23m14.597s] run 96/100: dynamic setup
+[progress +23m29.164s] run 97/100: dynamic setup
+[progress +23m43.985s] run 98/100: dynamic setup
+[progress +23m58.697s] run 99/100: dynamic setup
+[progress +24m13.06s] run 100/100: dynamic setup
+========== Per-run Summary ==========
+Run 1: func-seed=20260402, lwe-noise-seed=54321, lwe-a-seed=314159, correct=true, noise mean=-0.1562, noise std=10.7387, max|.|=25, online=13.8461216s
+Run 2: func-seed=20260403, lwe-noise-seed=54322, lwe-a-seed=314160, correct=true, noise mean=0.3594, noise std=10.7243, max|.|=32, online=13.7898659s
+Run 3: func-seed=20260404, lwe-noise-seed=54323, lwe-a-seed=314161, correct=true, noise mean=0.0312, noise std=9.7931, max|.|=22, online=14.0673301s
+Run 4: func-seed=20260405, lwe-noise-seed=54324, lwe-a-seed=314162, correct=true, noise mean=1.5312, noise std=11.4768, max|.|=24, online=13.8829285s
+Run 5: func-seed=20260406, lwe-noise-seed=54325, lwe-a-seed=314163, correct=true, noise mean=-1.5312, noise std=11.9843, max|.|=26, online=13.7629485s
+Run 6: func-seed=20260407, lwe-noise-seed=54326, lwe-a-seed=314164, correct=true, noise mean=-2.0781, noise std=9.9566, max|.|=26, online=13.9174024s
+Run 7: func-seed=20260408, lwe-noise-seed=54327, lwe-a-seed=314165, correct=true, noise mean=1.2188, noise std=11.4038, max|.|=35, online=14.1167588s
+Run 8: func-seed=20260409, lwe-noise-seed=54328, lwe-a-seed=314166, correct=true, noise mean=1.8750, noise std=11.2771, max|.|=33, online=13.869504s
+Run 9: func-seed=20260410, lwe-noise-seed=54329, lwe-a-seed=314167, correct=true, noise mean=-1.6562, noise std=11.0697, max|.|=25, online=13.6997626s
+Run 10: func-seed=20260411, lwe-noise-seed=54330, lwe-a-seed=314168, correct=true, noise mean=0.2656, noise std=10.6950, max|.|=25, online=13.8599708s
+Run 11: func-seed=20260412, lwe-noise-seed=54331, lwe-a-seed=314169, correct=true, noise mean=-0.8906, noise std=9.7454, max|.|=28, online=14.069981s
+Run 12: func-seed=20260413, lwe-noise-seed=54332, lwe-a-seed=314170, correct=true, noise mean=0.6406, noise std=8.9169, max|.|=28, online=13.9583387s
+Run 13: func-seed=20260414, lwe-noise-seed=54333, lwe-a-seed=314171, correct=true, noise mean=1.0000, noise std=9.9121, max|.|=21, online=13.7023816s
+Run 14: func-seed=20260415, lwe-noise-seed=54334, lwe-a-seed=314172, correct=true, noise mean=1.6406, noise std=11.5723, max|.|=31, online=13.9167197s
+Run 15: func-seed=20260416, lwe-noise-seed=54335, lwe-a-seed=314173, correct=true, noise mean=-0.5469, noise std=9.9576, max|.|=34, online=14.1400806s
+Run 16: func-seed=20260417, lwe-noise-seed=54336, lwe-a-seed=314174, correct=true, noise mean=-1.5625, noise std=9.7914, max|.|=26, online=13.9779675s
+Run 17: func-seed=20260418, lwe-noise-seed=54337, lwe-a-seed=314175, correct=true, noise mean=0.9688, noise std=8.4760, max|.|=21, online=13.7490874s
+Run 18: func-seed=20260419, lwe-noise-seed=54338, lwe-a-seed=314176, correct=true, noise mean=-0.2969, noise std=10.3858, max|.|=26, online=13.7964297s
+Run 19: func-seed=20260420, lwe-noise-seed=54339, lwe-a-seed=314177, correct=true, noise mean=-0.2812, noise std=9.2710, max|.|=23, online=14.1608863s
+Run 20: func-seed=20260421, lwe-noise-seed=54340, lwe-a-seed=314178, correct=true, noise mean=-1.1875, noise std=7.8400, max|.|=24, online=14.0952402s
+Run 21: func-seed=20260422, lwe-noise-seed=54341, lwe-a-seed=314179, correct=true, noise mean=-1.8750, noise std=10.9993, max|.|=27, online=13.7431369s
+Run 22: func-seed=20260423, lwe-noise-seed=54342, lwe-a-seed=314180, correct=true, noise mean=0.0781, noise std=9.2014, max|.|=23, online=13.7609599s
+Run 23: func-seed=20260424, lwe-noise-seed=54343, lwe-a-seed=314181, correct=true, noise mean=-2.4688, noise std=11.0679, max|.|=27, online=14.0222823s
+Run 24: func-seed=20260425, lwe-noise-seed=54344, lwe-a-seed=314182, correct=true, noise mean=-0.0625, noise std=10.2132, max|.|=26, online=13.8942812s
+Run 25: func-seed=20260426, lwe-noise-seed=54345, lwe-a-seed=314183, correct=true, noise mean=1.9062, noise std=10.5055, max|.|=23, online=13.6548421s
+Run 26: func-seed=20260427, lwe-noise-seed=54346, lwe-a-seed=314184, correct=true, noise mean=1.5938, noise std=11.1813, max|.|=38, online=13.6916205s
+Run 27: func-seed=20260428, lwe-noise-seed=54347, lwe-a-seed=314185, correct=true, noise mean=-1.3125, noise std=8.5948, max|.|=18, online=14.1668904s
+Run 28: func-seed=20260429, lwe-noise-seed=54348, lwe-a-seed=314186, correct=true, noise mean=0.6719, noise std=12.0196, max|.|=29, online=14.1455903s
+Run 29: func-seed=20260430, lwe-noise-seed=54349, lwe-a-seed=314187, correct=true, noise mean=-0.9844, noise std=9.1335, max|.|=20, online=13.9049259s
+Run 30: func-seed=20260431, lwe-noise-seed=54350, lwe-a-seed=314188, correct=true, noise mean=-1.7031, noise std=11.2217, max|.|=29, online=13.8246422s
+Run 31: func-seed=20260432, lwe-noise-seed=54351, lwe-a-seed=314189, correct=true, noise mean=-2.8125, noise std=10.9813, max|.|=27, online=14.1243476s
+Run 32: func-seed=20260433, lwe-noise-seed=54352, lwe-a-seed=314190, correct=true, noise mean=1.2812, noise std=12.2646, max|.|=42, online=14.1547163s
+Run 33: func-seed=20260434, lwe-noise-seed=54353, lwe-a-seed=314191, correct=true, noise mean=-1.2188, noise std=11.4830, max|.|=31, online=13.7413244s
+Run 34: func-seed=20260435, lwe-noise-seed=54354, lwe-a-seed=314192, correct=true, noise mean=0.9062, noise std=9.7784, max|.|=24, online=13.6770357s
+Run 35: func-seed=20260436, lwe-noise-seed=54355, lwe-a-seed=314193, correct=true, noise mean=-1.3125, noise std=10.1595, max|.|=23, online=13.9976332s
+Run 36: func-seed=20260437, lwe-noise-seed=54356, lwe-a-seed=314194, correct=true, noise mean=-1.2031, noise std=9.8174, max|.|=26, online=14.0899154s
+Run 37: func-seed=20260438, lwe-noise-seed=54357, lwe-a-seed=314195, correct=true, noise mean=-0.9531, noise std=10.4020, max|.|=29, online=13.8549198s
+Run 38: func-seed=20260439, lwe-noise-seed=54358, lwe-a-seed=314196, correct=true, noise mean=-0.7812, noise std=11.1179, max|.|=29, online=13.8227927s
+Run 39: func-seed=20260440, lwe-noise-seed=54359, lwe-a-seed=314197, correct=true, noise mean=-0.1406, noise std=10.4356, max|.|=25, online=14.0569559s
+Run 40: func-seed=20260441, lwe-noise-seed=54360, lwe-a-seed=314198, correct=true, noise mean=0.3906, noise std=9.7734, max|.|=22, online=14.1089536s
+Run 41: func-seed=20260442, lwe-noise-seed=54361, lwe-a-seed=314199, correct=true, noise mean=1.6406, noise std=8.9204, max|.|=17, online=13.811977s
+Run 42: func-seed=20260443, lwe-noise-seed=54362, lwe-a-seed=314200, correct=true, noise mean=0.6250, noise std=12.0189, max|.|=29, online=13.7694677s
+Run 43: func-seed=20260444, lwe-noise-seed=54363, lwe-a-seed=314201, correct=true, noise mean=2.2031, noise std=10.7255, max|.|=29, online=13.9964822s
+Run 44: func-seed=20260445, lwe-noise-seed=54364, lwe-a-seed=314202, correct=true, noise mean=0.2031, noise std=11.2015, max|.|=31, online=14.1525107s
+Run 45: func-seed=20260446, lwe-noise-seed=54365, lwe-a-seed=314203, correct=true, noise mean=0.8281, noise std=10.9951, max|.|=30, online=13.8879675s
+Run 46: func-seed=20260447, lwe-noise-seed=54366, lwe-a-seed=314204, correct=true, noise mean=1.2500, noise std=12.1411, max|.|=31, online=13.7671705s
+Run 47: func-seed=20260448, lwe-noise-seed=54367, lwe-a-seed=314205, correct=true, noise mean=1.8594, noise std=9.8375, max|.|=25, online=13.9455957s
+Run 48: func-seed=20260449, lwe-noise-seed=54368, lwe-a-seed=314206, correct=true, noise mean=0.5938, noise std=10.6136, max|.|=31, online=14.0740553s
+Run 49: func-seed=20260450, lwe-noise-seed=54369, lwe-a-seed=314207, correct=true, noise mean=-0.4375, noise std=10.1748, max|.|=24, online=13.8880818s
+Run 50: func-seed=20260451, lwe-noise-seed=54370, lwe-a-seed=314208, correct=true, noise mean=0.4219, noise std=9.9165, max|.|=24, online=13.7443153s
+Run 51: func-seed=20260452, lwe-noise-seed=54371, lwe-a-seed=314209, correct=true, noise mean=-0.9844, noise std=10.2416, max|.|=24, online=13.8967278s
+Run 52: func-seed=20260453, lwe-noise-seed=54372, lwe-a-seed=314210, correct=true, noise mean=0.0938, noise std=11.7283, max|.|=37, online=14.1927037s
+Run 53: func-seed=20260454, lwe-noise-seed=54373, lwe-a-seed=314211, correct=true, noise mean=-0.7812, noise std=11.2131, max|.|=37, online=14.0844621s
+Run 54: func-seed=20260455, lwe-noise-seed=54374, lwe-a-seed=314212, correct=true, noise mean=2.1875, noise std=9.6645, max|.|=24, online=13.878088s
+Run 55: func-seed=20260456, lwe-noise-seed=54375, lwe-a-seed=314213, correct=true, noise mean=2.7500, noise std=11.2680, max|.|=37, online=13.9298859s
+Run 56: func-seed=20260457, lwe-noise-seed=54376, lwe-a-seed=314214, correct=true, noise mean=-1.0156, noise std=10.1558, max|.|=25, online=14.1519457s
+Run 57: func-seed=20260458, lwe-noise-seed=54377, lwe-a-seed=314215, correct=true, noise mean=-1.0156, noise std=10.9893, max|.|=28, online=14.0361438s
+Run 58: func-seed=20260459, lwe-noise-seed=54378, lwe-a-seed=314216, correct=true, noise mean=0.7031, noise std=10.3933, max|.|=26, online=13.711763s
+Run 59: func-seed=20260460, lwe-noise-seed=54379, lwe-a-seed=314217, correct=true, noise mean=-0.5469, noise std=10.0917, max|.|=27, online=13.764757s
+Run 60: func-seed=20260461, lwe-noise-seed=54380, lwe-a-seed=314218, correct=true, noise mean=1.2812, noise std=10.6367, max|.|=32, online=14.1669363s
+Run 61: func-seed=20260462, lwe-noise-seed=54381, lwe-a-seed=314219, correct=true, noise mean=0.9375, noise std=9.9873, max|.|=22, online=14.0978991s
+Run 62: func-seed=20260463, lwe-noise-seed=54382, lwe-a-seed=314220, correct=true, noise mean=-0.4531, noise std=10.1918, max|.|=27, online=13.7578385s
+Run 63: func-seed=20260464, lwe-noise-seed=54383, lwe-a-seed=314221, correct=true, noise mean=-0.0312, noise std=12.0972, max|.|=31, online=13.885023s
+Run 64: func-seed=20260465, lwe-noise-seed=54384, lwe-a-seed=314222, correct=true, noise mean=-0.2500, noise std=11.1901, max|.|=26, online=14.1394703s
+Run 65: func-seed=20260466, lwe-noise-seed=54385, lwe-a-seed=314223, correct=true, noise mean=2.0781, noise std=10.0876, max|.|=24, online=14.1868105s
+Run 66: func-seed=20260467, lwe-noise-seed=54386, lwe-a-seed=314224, correct=true, noise mean=-0.9531, noise std=9.7154, max|.|=29, online=13.7662319s
+Run 67: func-seed=20260468, lwe-noise-seed=54387, lwe-a-seed=314225, correct=true, noise mean=0.9688, noise std=9.8994, max|.|=32, online=13.8336547s
+Run 68: func-seed=20260469, lwe-noise-seed=54388, lwe-a-seed=314226, correct=true, noise mean=0.3125, noise std=11.4221, max|.|=33, online=14.1489533s
+Run 69: func-seed=20260470, lwe-noise-seed=54389, lwe-a-seed=314227, correct=true, noise mean=1.6875, noise std=12.1538, max|.|=26, online=14.1972039s
+Run 70: func-seed=20260471, lwe-noise-seed=54390, lwe-a-seed=314228, correct=true, noise mean=-3.3594, noise std=8.9606, max|.|=26, online=13.75001s
+Run 71: func-seed=20260472, lwe-noise-seed=54391, lwe-a-seed=314229, correct=true, noise mean=-0.0469, noise std=9.5777, max|.|=21, online=13.7107905s
+Run 72: func-seed=20260473, lwe-noise-seed=54392, lwe-a-seed=314230, correct=true, noise mean=-0.4062, noise std=11.8040, max|.|=30, online=14.0346186s
+Run 73: func-seed=20260474, lwe-noise-seed=54393, lwe-a-seed=314231, correct=true, noise mean=-1.1875, noise std=11.0692, max|.|=22, online=14.117444s
+Run 74: func-seed=20260475, lwe-noise-seed=54394, lwe-a-seed=314232, correct=true, noise mean=1.4531, noise std=12.9264, max|.|=29, online=13.7855606s
+Run 75: func-seed=20260476, lwe-noise-seed=54395, lwe-a-seed=314233, correct=true, noise mean=1.1875, noise std=9.4387, max|.|=21, online=13.7170529s
+Run 76: func-seed=20260477, lwe-noise-seed=54396, lwe-a-seed=314234, correct=true, noise mean=1.1719, noise std=11.3929, max|.|=26, online=14.1377703s
+Run 77: func-seed=20260478, lwe-noise-seed=54397, lwe-a-seed=314235, correct=true, noise mean=-2.0781, noise std=11.0430, max|.|=29, online=14.1557683s
+Run 78: func-seed=20260479, lwe-noise-seed=54398, lwe-a-seed=314236, correct=true, noise mean=0.7500, noise std=10.0794, max|.|=23, online=13.9123045s
+Run 79: func-seed=20260480, lwe-noise-seed=54399, lwe-a-seed=314237, correct=true, noise mean=0.0938, noise std=11.5173, max|.|=24, online=13.872937s
+Run 80: func-seed=20260481, lwe-noise-seed=54400, lwe-a-seed=314238, correct=true, noise mean=-0.0469, noise std=9.2710, max|.|=24, online=14.109395s
+Run 81: func-seed=20260482, lwe-noise-seed=54401, lwe-a-seed=314239, correct=true, noise mean=-0.4219, noise std=8.1754, max|.|=18, online=14.1602104s
+Run 82: func-seed=20260483, lwe-noise-seed=54402, lwe-a-seed=314240, correct=true, noise mean=1.7188, noise std=10.7768, max|.|=29, online=13.8263998s
+Run 83: func-seed=20260484, lwe-noise-seed=54403, lwe-a-seed=314241, correct=true, noise mean=-1.4062, noise std=9.2765, max|.|=24, online=13.6533223s
+Run 84: func-seed=20260485, lwe-noise-seed=54404, lwe-a-seed=314242, correct=true, noise mean=1.2969, noise std=10.8609, max|.|=27, online=13.9825228s
+Run 85: func-seed=20260486, lwe-noise-seed=54405, lwe-a-seed=314243, correct=true, noise mean=-2.6094, noise std=8.0789, max|.|=25, online=14.1954002s
+Run 86: func-seed=20260487, lwe-noise-seed=54406, lwe-a-seed=314244, correct=true, noise mean=1.3281, noise std=10.5949, max|.|=26, online=13.9565476s
+Run 87: func-seed=20260488, lwe-noise-seed=54407, lwe-a-seed=314245, correct=true, noise mean=0.0938, noise std=10.9968, max|.|=27, online=13.8180882s
+Run 88: func-seed=20260489, lwe-noise-seed=54408, lwe-a-seed=314246, correct=true, noise mean=1.5000, noise std=8.0990, max|.|=22, online=13.9800366s
+Run 89: func-seed=20260490, lwe-noise-seed=54409, lwe-a-seed=314247, correct=true, noise mean=1.2344, noise std=12.3069, max|.|=29, online=14.1500884s
+Run 90: func-seed=20260491, lwe-noise-seed=54410, lwe-a-seed=314248, correct=true, noise mean=-0.4844, noise std=9.9953, max|.|=26, online=13.9773106s
+Run 91: func-seed=20260492, lwe-noise-seed=54411, lwe-a-seed=314249, correct=true, noise mean=3.3125, noise std=11.9070, max|.|=28, online=13.7887459s
+Run 92: func-seed=20260493, lwe-noise-seed=54412, lwe-a-seed=314250, correct=true, noise mean=-0.8906, noise std=10.9717, max|.|=31, online=13.9006608s
+Run 93: func-seed=20260494, lwe-noise-seed=54413, lwe-a-seed=314251, correct=true, noise mean=-0.9219, noise std=10.2230, max|.|=27, online=14.1813788s
+Run 94: func-seed=20260495, lwe-noise-seed=54414, lwe-a-seed=314252, correct=true, noise mean=0.5469, noise std=10.5474, max|.|=27, online=14.0501502s
+Run 95: func-seed=20260496, lwe-noise-seed=54415, lwe-a-seed=314253, correct=true, noise mean=0.4375, noise std=11.7552, max|.|=35, online=13.7395798s
+Run 96: func-seed=20260497, lwe-noise-seed=54416, lwe-a-seed=314254, correct=true, noise mean=0.7188, noise std=11.2604, max|.|=28, online=13.8862413s
+Run 97: func-seed=20260498, lwe-noise-seed=54417, lwe-a-seed=314255, correct=true, noise mean=-1.5156, noise std=9.4439, max|.|=28, online=14.1235538s
+Run 98: func-seed=20260499, lwe-noise-seed=54418, lwe-a-seed=314256, correct=true, noise mean=0.0156, noise std=10.5171, max|.|=29, online=14.0235657s
+Run 99: func-seed=20260500, lwe-noise-seed=54419, lwe-a-seed=314257, correct=true, noise mean=0.7812, noise std=10.3418, max|.|=30, online=13.6853746s
+Run 100: func-seed=20260501, lwe-noise-seed=54420, lwe-a-seed=314258, correct=true, noise mean=0.6094, noise std=10.5632, max|.|=28, online=13.9460786s
+=====================================
+
+========== Aggregated Summary ==========
+runs                       : 100
+all runs correct           : true
+average dynamic setup      : 109.981852ms
+  - fresh LWE ciphertexts  : 1.108751ms
+  - function table         : 105.735µs
+  - LUT build              : 108.767366ms
+  - poly plaintext prep    : 0s
+average online total       : 13.940105025s
+  - pack LWE->BFV          : 1.925455563s
+  - poly eval total        : 11.586937017s
+    · build basis/powers   : 3.144763337s
+    · square x^(r/2)       : 105.718187ms
+    · build grouped powers : 1.41268283s
+    · ParallelLT           : 6.693856454s
+      · LT matrix build    : 70.050196ms
+      · hoisted decompose  : 13.348825ms
+      · baby rotations     : 645.4259ms
+      · giant rotations    : 929.727214ms
+      · pt-ct multiplies   : 3.629010875s
+      · first-stage other  : 1.313317942s
+      · second stage       : 0s
+      · post-process       : 22.133175ms
+      · post-LT rescale    : 3.498973ms
+      · other residual     : 67.343354ms
+    · pointwise multiply   : 22.754585ms
+    · rotate-and-sum       : 162.558814ms
+    · x^d / power gen      : 35.062053ms
+    · outer combine        : 0s
+    · leading term         : 8.309289ms
+    · final add            : 1.07964ms
+  - SlotToCoeff            : 364.992646ms
+  - BFV-side key switch    : 29.160379ms
+  - correction mul         : 161.929µs
+  - external mod switch    : 33.346391ms
+  - sample extraction      : 51.1µs
+noise mean (all samples)   : 0.0838
+noise std dev (all samples): 10.6175
+max |noise| (all samples)  : 42
+total wall time            : 24m27.6727744s
+========================================
+
+$ ./fb.exe -N 32768 -m 128 -n 2048 -d 65536   -T 65537 -p 512   -func random   -logq "45,37,37,37,37,37,37,37,37,37,37,37,37,37,37,37,37,37,37,37,30"   -logp "45,45" -lt-drop-level 3 -lt-post-level 2  -run 100 -final-ks-level-p=-1 -final-ks-pow2-base=1
+========== BFV Parameters ==========
+N                         : 32768
+m                         : 128
+n (LWE dimension)         : 2048
+input degree d            : 65536
+degree mode               : 9bit power-of-two path (d is a power of two)
+poly-eval algorithm       : alg5
+poly LT baby steps        : auto
+poly LT giant steps       : auto
+plaintext modulus T       : 65537
+message modulus p         : 512
+alpha=floor(T/p)          : 128
+MaxLevel                  : 20
+LogQ bits                 : [45 37 37 37 37 37 37 37 37 37 37 37 37 37 37 37 37 37 37 37 30]
+LogP bits                 : [45 45]
+Q factors                 : [35184372744193 137438822401 137438691329 137439870977 137440198657 137440264193 137437511681 137440854017 137436659713 137441640449 137442557953 137443606529 137443803137 137434103809 137444720641 137444786177 137433317377 137432989697 137445572609 137446686721 1073872897]
+P factors                 : [35184373006337 35184373989377]
+====================================
+
+---------- One-time preprocessing ----------
+SlotToCoeff basis         : 75.7536ms
+SlotToCoeff diagonals     : 9.3933ms
+SlotToCoeff plaintexts    : 785.0874ms
+key generation            : 1.661178s
+encrypted secret blocks   : 165.9706ms
+target secret build       : 10.0008ms
+evaluation-key generation : 57.8463ms
+poly-eval Galois keys     : 26
+SlotToCoeff rotations     : 21
+packing Galois keys       : 9
+distinct Galois keys total: 46
+leveled rotation keys     : true
+rotation level plan       : pack=19, polyPower=10, polyGrouped=2, polyLT-in=3, polyLT-out=2, final-sum=1, poly-out=1
+rotation keys total size  : 1019.04 MiB (1068539504 bytes)
+  - LevelQ=0 (#Q=1, logQ≈46 bits): 10 keys, 15.00 MiB (15729920 bytes)
+  - LevelQ=1 (#Q=2, logQ≈82 bits): 11 keys, 22.00 MiB (23070256 bytes)
+  - LevelQ=3 (#Q=4, logQ≈157 bits): 17 keys, 102.01 MiB (106960192 bytes)
+  - LevelQ=19 (#Q=20, logQ≈749 bits): 8 keys, 880.03 MiB (922779136 bytes)
+relinearization key size  : 126.50 MiB (132649456 bytes)
+final key-switch key level: LevelQ=0 (#Q=1, logQ≈46 bits), LevelP=-1 (no P)
+final key-switch pow2 base: 2^1
+final key-switch params   : Q-only parameter view, PCount=0
+final key-switch key size : 22.50 MiB (23595504 bytes)
+auxiliary keys total size : 1.14 GiB (1224784464 bytes)
+encrypted secret size     : 84.00 MiB (88085488 bytes)
+one-time preprocessing    : 2.8148191s
+--------------------------------------------
+
+[progress +2.842s] run 1/100: dynamic setup
+[progress +6.697s] run 2/100: dynamic setup
+[progress +10.448s] run 3/100: dynamic setup
+[progress +14.282s] run 4/100: dynamic setup
+[progress +18.09s] run 5/100: dynamic setup
+[progress +21.846s] run 6/100: dynamic setup
+[progress +25.608s] run 7/100: dynamic setup
+[progress +29.407s] run 8/100: dynamic setup
+[progress +33.217s] run 9/100: dynamic setup
+[progress +36.977s] run 10/100: dynamic setup
+[progress +40.769s] run 11/100: dynamic setup
+[progress +44.551s] run 12/100: dynamic setup
+[progress +48.35s] run 13/100: dynamic setup
+[progress +52.216s] run 14/100: dynamic setup
+[progress +56.088s] run 15/100: dynamic setup
+[progress +59.995s] run 16/100: dynamic setup
+[progress +1m3.894s] run 17/100: dynamic setup
+[progress +1m7.782s] run 18/100: dynamic setup
+[progress +1m11.676s] run 19/100: dynamic setup
+[progress +1m15.544s] run 20/100: dynamic setup
+[progress +1m19.331s] run 21/100: dynamic setup
+[progress +1m23.111s] run 22/100: dynamic setup
+[progress +1m26.937s] run 23/100: dynamic setup
+[progress +1m30.767s] run 24/100: dynamic setup
+[progress +1m34.542s] run 25/100: dynamic setup
+[progress +1m38.361s] run 26/100: dynamic setup
+[progress +1m42.17s] run 27/100: dynamic setup
+[progress +1m46.016s] run 28/100: dynamic setup
+[progress +1m49.902s] run 29/100: dynamic setup
+[progress +1m53.79s] run 30/100: dynamic setup
+[progress +1m57.661s] run 31/100: dynamic setup
+[progress +2m1.556s] run 32/100: dynamic setup
+[progress +2m5.439s] run 33/100: dynamic setup
+[progress +2m9.274s] run 34/100: dynamic setup
+[progress +2m13.151s] run 35/100: dynamic setup
+[progress +2m16.997s] run 36/100: dynamic setup
+[progress +2m20.819s] run 37/100: dynamic setup
+[progress +2m24.622s] run 38/100: dynamic setup
+[progress +2m28.434s] run 39/100: dynamic setup
+[progress +2m32.227s] run 40/100: dynamic setup
+[progress +2m36.015s] run 41/100: dynamic setup
+[progress +2m39.79s] run 42/100: dynamic setup
+[progress +2m43.562s] run 43/100: dynamic setup
+[progress +2m47.386s] run 44/100: dynamic setup
+[progress +2m51.258s] run 45/100: dynamic setup
+[progress +2m55.16s] run 46/100: dynamic setup
+[progress +2m59.046s] run 47/100: dynamic setup
+[progress +3m2.94s] run 48/100: dynamic setup
+[progress +3m6.852s] run 49/100: dynamic setup
+[progress +3m10.744s] run 50/100: dynamic setup
+[progress +3m14.68s] run 51/100: dynamic setup
+[progress +3m18.489s] run 52/100: dynamic setup
+[progress +3m22.327s] run 53/100: dynamic setup
+[progress +3m26.139s] run 54/100: dynamic setup
+[progress +3m29.936s] run 55/100: dynamic setup
+[progress +3m33.747s] run 56/100: dynamic setup
+[progress +3m37.588s] run 57/100: dynamic setup
+[progress +3m41.393s] run 58/100: dynamic setup
+[progress +3m45.161s] run 59/100: dynamic setup
+[progress +3m48.991s] run 60/100: dynamic setup
+[progress +3m52.897s] run 61/100: dynamic setup
+[progress +3m56.773s] run 62/100: dynamic setup
+[progress +4m0.666s] run 63/100: dynamic setup
+[progress +4m4.529s] run 64/100: dynamic setup
+[progress +4m8.401s] run 65/100: dynamic setup
+[progress +4m12.295s] run 66/100: dynamic setup
+[progress +4m16.179s] run 67/100: dynamic setup
+[progress +4m19.974s] run 68/100: dynamic setup
+[progress +4m23.734s] run 69/100: dynamic setup
+[progress +4m27.483s] run 70/100: dynamic setup
+[progress +4m31.273s] run 71/100: dynamic setup
+[progress +4m35.073s] run 72/100: dynamic setup
+[progress +4m38.85s] run 73/100: dynamic setup
+[progress +4m42.607s] run 74/100: dynamic setup
+[progress +4m46.386s] run 75/100: dynamic setup
+[progress +4m50.255s] run 76/100: dynamic setup
+[progress +4m54.13s] run 77/100: dynamic setup
+[progress +4m58.027s] run 78/100: dynamic setup
+[progress +5m1.899s] run 79/100: dynamic setup
+[progress +5m5.779s] run 80/100: dynamic setup
+[progress +5m9.641s] run 81/100: dynamic setup
+[progress +5m13.484s] run 82/100: dynamic setup
+[progress +5m17.333s] run 83/100: dynamic setup
+[progress +5m21.236s] run 84/100: dynamic setup
+[progress +5m25.182s] run 85/100: dynamic setup
+[progress +5m29.154s] run 86/100: dynamic setup
+[progress +5m33.186s] run 87/100: dynamic setup
+[progress +5m37.186s] run 88/100: dynamic setup
+[progress +5m41.171s] run 89/100: dynamic setup
+[progress +5m45.156s] run 90/100: dynamic setup
+[progress +5m49.128s] run 91/100: dynamic setup
+[progress +5m53.101s] run 92/100: dynamic setup
+[progress +5m57.078s] run 93/100: dynamic setup
+[progress +6m1.02s] run 94/100: dynamic setup
+[progress +6m4.997s] run 95/100: dynamic setup
+[progress +6m8.96s] run 96/100: dynamic setup
+[progress +6m12.932s] run 97/100: dynamic setup
+[progress +6m16.902s] run 98/100: dynamic setup
+[progress +6m20.861s] run 99/100: dynamic setup
+[progress +6m24.731s] run 100/100: dynamic setup
+========== Per-run Summary ==========
+Run 1: func-seed=20260402, lwe-noise-seed=54321, lwe-a-seed=314159, correct=true, noise mean=-1.5000, noise std=9.8362, max|.|=27, online=3.7485067s
+Run 2: func-seed=20260403, lwe-noise-seed=54322, lwe-a-seed=314160, correct=true, noise mean=-0.4688, noise std=10.8483, max|.|=30, online=3.6668844s
+Run 3: func-seed=20260404, lwe-noise-seed=54323, lwe-a-seed=314161, correct=true, noise mean=0.8828, noise std=8.8164, max|.|=25, online=3.7525771s
+Run 4: func-seed=20260405, lwe-noise-seed=54324, lwe-a-seed=314162, correct=true, noise mean=0.4062, noise std=10.7648, max|.|=27, online=3.7231225s
+Run 5: func-seed=20260406, lwe-noise-seed=54325, lwe-a-seed=314163, correct=true, noise mean=-0.1250, noise std=10.8130, max|.|=30, online=3.6723582s
+Run 6: func-seed=20260407, lwe-noise-seed=54326, lwe-a-seed=314164, correct=true, noise mean=-0.9453, noise std=11.4968, max|.|=38, online=3.6816485s
+Run 7: func-seed=20260408, lwe-noise-seed=54327, lwe-a-seed=314165, correct=true, noise mean=0.3906, noise std=10.4517, max|.|=35, online=3.7149491s
+Run 8: func-seed=20260409, lwe-noise-seed=54328, lwe-a-seed=314166, correct=true, noise mean=1.2969, noise std=9.7631, max|.|=33, online=3.7273299s
+Run 9: func-seed=20260410, lwe-noise-seed=54329, lwe-a-seed=314167, correct=true, noise mean=0.9297, noise std=11.2251, max|.|=30, online=3.674474s
+Run 10: func-seed=20260411, lwe-noise-seed=54330, lwe-a-seed=314168, correct=true, noise mean=0.0391, noise std=11.0471, max|.|=27, online=3.7060424s
+Run 11: func-seed=20260412, lwe-noise-seed=54331, lwe-a-seed=314169, correct=true, noise mean=-0.0859, noise std=10.7892, max|.|=30, online=3.6978423s
+Run 12: func-seed=20260413, lwe-noise-seed=54332, lwe-a-seed=314170, correct=true, noise mean=0.7656, noise std=11.4041, max|.|=30, online=3.7185129s
+Run 13: func-seed=20260414, lwe-noise-seed=54333, lwe-a-seed=314171, correct=true, noise mean=-0.9375, noise std=11.8491, max|.|=29, online=3.7796617s
+Run 14: func-seed=20260415, lwe-noise-seed=54334, lwe-a-seed=314172, correct=true, noise mean=1.0156, noise std=11.1922, max|.|=30, online=3.7851604s
+Run 15: func-seed=20260416, lwe-noise-seed=54335, lwe-a-seed=314173, correct=true, noise mean=-0.3359, noise std=11.1861, max|.|=28, online=3.823892s
+Run 16: func-seed=20260417, lwe-noise-seed=54336, lwe-a-seed=314174, correct=true, noise mean=1.6172, noise std=11.2494, max|.|=30, online=3.8133408s
+Run 17: func-seed=20260418, lwe-noise-seed=54337, lwe-a-seed=314175, correct=true, noise mean=-0.1328, noise std=10.6568, max|.|=29, online=3.8041049s
+Run 18: func-seed=20260419, lwe-noise-seed=54338, lwe-a-seed=314176, correct=true, noise mean=0.4297, noise std=11.5215, max|.|=41, online=3.8154918s
+Run 19: func-seed=20260420, lwe-noise-seed=54339, lwe-a-seed=314177, correct=true, noise mean=0.2734, noise std=10.1140, max|.|=25, online=3.7837287s
+Run 20: func-seed=20260421, lwe-noise-seed=54340, lwe-a-seed=314178, correct=true, noise mean=-0.5391, noise std=9.9097, max|.|=30, online=3.7039046s
+Run 21: func-seed=20260422, lwe-noise-seed=54341, lwe-a-seed=314179, correct=true, noise mean=0.8828, noise std=11.1296, max|.|=33, online=3.6975074s
+Run 22: func-seed=20260423, lwe-noise-seed=54342, lwe-a-seed=314180, correct=true, noise mean=0.0391, noise std=10.1899, max|.|=28, online=3.7401281s
+Run 23: func-seed=20260424, lwe-noise-seed=54343, lwe-a-seed=314181, correct=true, noise mean=1.3438, noise std=10.0533, max|.|=26, online=3.7459909s
+Run 24: func-seed=20260425, lwe-noise-seed=54344, lwe-a-seed=314182, correct=true, noise mean=-0.2969, noise std=10.3133, max|.|=25, online=3.6914212s
+Run 25: func-seed=20260426, lwe-noise-seed=54345, lwe-a-seed=314183, correct=true, noise mean=0.3047, noise std=11.4104, max|.|=31, online=3.7338581s
+Run 26: func-seed=20260427, lwe-noise-seed=54346, lwe-a-seed=314184, correct=true, noise mean=-0.2891, noise std=11.6385, max|.|=35, online=3.7272635s
+Run 27: func-seed=20260428, lwe-noise-seed=54347, lwe-a-seed=314185, correct=true, noise mean=-0.7031, noise std=11.9839, max|.|=36, online=3.7636584s
+Run 28: func-seed=20260429, lwe-noise-seed=54348, lwe-a-seed=314186, correct=true, noise mean=1.3516, noise std=10.5613, max|.|=26, online=3.803413s
+Run 29: func-seed=20260430, lwe-noise-seed=54349, lwe-a-seed=314187, correct=true, noise mean=-0.0938, noise std=11.8298, max|.|=32, online=3.8073553s
+Run 30: func-seed=20260431, lwe-noise-seed=54350, lwe-a-seed=314188, correct=true, noise mean=-0.5078, noise std=10.0055, max|.|=33, online=3.787567s
+Run 31: func-seed=20260432, lwe-noise-seed=54351, lwe-a-seed=314189, correct=true, noise mean=0.8125, noise std=9.6491, max|.|=25, online=3.8042718s
+Run 32: func-seed=20260433, lwe-noise-seed=54352, lwe-a-seed=314190, correct=true, noise mean=-0.1953, noise std=10.7580, max|.|=31, online=3.8015389s
+Run 33: func-seed=20260434, lwe-noise-seed=54353, lwe-a-seed=314191, correct=true, noise mean=0.4219, noise std=10.9599, max|.|=25, online=3.7510554s
+Run 34: func-seed=20260435, lwe-noise-seed=54354, lwe-a-seed=314192, correct=true, noise mean=-1.3516, noise std=10.7184, max|.|=27, online=3.7903748s
+Run 35: func-seed=20260436, lwe-noise-seed=54355, lwe-a-seed=314193, correct=true, noise mean=-0.3906, noise std=11.1840, max|.|=35, online=3.7643051s
+Run 36: func-seed=20260437, lwe-noise-seed=54356, lwe-a-seed=314194, correct=true, noise mean=0.9297, noise std=10.1367, max|.|=26, online=3.742461s
+Run 37: func-seed=20260438, lwe-noise-seed=54357, lwe-a-seed=314195, correct=true, noise mean=-0.6484, noise std=9.9441, max|.|=30, online=3.7163447s
+Run 38: func-seed=20260439, lwe-noise-seed=54358, lwe-a-seed=314196, correct=true, noise mean=-0.1484, noise std=10.8822, max|.|=30, online=3.7294451s
+Run 39: func-seed=20260440, lwe-noise-seed=54359, lwe-a-seed=314197, correct=true, noise mean=0.6797, noise std=9.6160, max|.|=38, online=3.704077s
+Run 40: func-seed=20260441, lwe-noise-seed=54360, lwe-a-seed=314198, correct=true, noise mean=1.5391, noise std=10.0901, max|.|=40, online=3.7092699s
+Run 41: func-seed=20260442, lwe-noise-seed=54361, lwe-a-seed=314199, correct=true, noise mean=-1.4062, noise std=10.0836, max|.|=28, online=3.6847993s
+Run 42: func-seed=20260443, lwe-noise-seed=54362, lwe-a-seed=314200, correct=true, noise mean=0.7109, noise std=10.9624, max|.|=39, online=3.6903098s
+Run 43: func-seed=20260444, lwe-noise-seed=54363, lwe-a-seed=314201, correct=true, noise mean=-0.7188, noise std=11.1193, max|.|=29, online=3.7393948s
+Run 44: func-seed=20260445, lwe-noise-seed=54364, lwe-a-seed=314202, correct=true, noise mean=-0.3047, noise std=10.3604, max|.|=32, online=3.7849002s
+Run 45: func-seed=20260446, lwe-noise-seed=54365, lwe-a-seed=314203, correct=true, noise mean=0.8047, noise std=12.0248, max|.|=34, online=3.8184366s
+Run 46: func-seed=20260447, lwe-noise-seed=54366, lwe-a-seed=314204, correct=true, noise mean=-0.3750, noise std=10.7311, max|.|=32, online=3.800432s
+Run 47: func-seed=20260448, lwe-noise-seed=54367, lwe-a-seed=314205, correct=true, noise mean=-0.4531, noise std=10.7811, max|.|=34, online=3.8096765s
+Run 48: func-seed=20260449, lwe-noise-seed=54368, lwe-a-seed=314206, correct=true, noise mean=1.5234, noise std=10.4313, max|.|=28, online=3.8268626s
+Run 49: func-seed=20260450, lwe-noise-seed=54369, lwe-a-seed=314207, correct=true, noise mean=-0.8906, noise std=11.3834, max|.|=26, online=3.8072946s
+Run 50: func-seed=20260451, lwe-noise-seed=54370, lwe-a-seed=314208, correct=true, noise mean=1.7344, noise std=10.5308, max|.|=38, online=3.8469531s
+Run 51: func-seed=20260452, lwe-noise-seed=54371, lwe-a-seed=314209, correct=true, noise mean=-0.4844, noise std=10.5542, max|.|=30, online=3.7275255s
+Run 52: func-seed=20260453, lwe-noise-seed=54372, lwe-a-seed=314210, correct=true, noise mean=-0.3125, noise std=10.5110, max|.|=27, online=3.7516004s
+Run 53: func-seed=20260454, lwe-noise-seed=54373, lwe-a-seed=314211, correct=true, noise mean=-0.2656, noise std=10.8062, max|.|=29, online=3.7275314s
+Run 54: func-seed=20260455, lwe-noise-seed=54374, lwe-a-seed=314212, correct=true, noise mean=-0.7656, noise std=9.8381, max|.|=29, online=3.7142191s
+Run 55: func-seed=20260456, lwe-noise-seed=54375, lwe-a-seed=314213, correct=true, noise mean=0.9922, noise std=10.4847, max|.|=36, online=3.7281216s
+Run 56: func-seed=20260457, lwe-noise-seed=54376, lwe-a-seed=314214, correct=true, noise mean=-0.6484, noise std=9.9464, max|.|=32, online=3.7520678s
+Run 57: func-seed=20260458, lwe-noise-seed=54377, lwe-a-seed=314215, correct=true, noise mean=-1.3828, noise std=10.3079, max|.|=28, online=3.7245505s
+Run 58: func-seed=20260459, lwe-noise-seed=54378, lwe-a-seed=314216, correct=true, noise mean=-0.6406, noise std=10.8475, max|.|=40, online=3.6833004s
+Run 59: func-seed=20260460, lwe-noise-seed=54379, lwe-a-seed=314217, correct=true, noise mean=-0.8516, noise std=9.6080, max|.|=28, online=3.7437678s
+Run 60: func-seed=20260461, lwe-noise-seed=54380, lwe-a-seed=314218, correct=true, noise mean=1.9531, noise std=11.0650, max|.|=40, online=3.8247987s
+Run 61: func-seed=20260462, lwe-noise-seed=54381, lwe-a-seed=314219, correct=true, noise mean=0.9375, noise std=10.1094, max|.|=30, online=3.789124s
+Run 62: func-seed=20260463, lwe-noise-seed=54382, lwe-a-seed=314220, correct=true, noise mean=1.2734, noise std=10.3250, max|.|=25, online=3.8073226s
+Run 63: func-seed=20260464, lwe-noise-seed=54383, lwe-a-seed=314221, correct=true, noise mean=1.1484, noise std=10.5668, max|.|=32, online=3.7827071s
+Run 64: func-seed=20260465, lwe-noise-seed=54384, lwe-a-seed=314222, correct=true, noise mean=-0.7109, noise std=9.5428, max|.|=26, online=3.7832206s
+Run 65: func-seed=20260466, lwe-noise-seed=54385, lwe-a-seed=314223, correct=true, noise mean=-0.1719, noise std=10.5328, max|.|=32, online=3.8108876s
+Run 66: func-seed=20260467, lwe-noise-seed=54386, lwe-a-seed=314224, correct=true, noise mean=-0.0547, noise std=10.1314, max|.|=34, online=3.7994369s
+Run 67: func-seed=20260468, lwe-noise-seed=54387, lwe-a-seed=314225, correct=true, noise mean=0.2656, noise std=10.2587, max|.|=31, online=3.7059082s
+Run 68: func-seed=20260469, lwe-noise-seed=54388, lwe-a-seed=314226, correct=true, noise mean=0.2734, noise std=9.8137, max|.|=26, online=3.674856s
+Run 69: func-seed=20260470, lwe-noise-seed=54389, lwe-a-seed=314227, correct=true, noise mean=-0.3438, noise std=11.0930, max|.|=28, online=3.6655472s
+Run 70: func-seed=20260471, lwe-noise-seed=54390, lwe-a-seed=314228, correct=true, noise mean=1.0234, noise std=10.2122, max|.|=31, online=3.7082889s
+Run 71: func-seed=20260472, lwe-noise-seed=54391, lwe-a-seed=314229, correct=true, noise mean=-1.0469, noise std=9.8122, max|.|=34, online=3.7153798s
+Run 72: func-seed=20260473, lwe-noise-seed=54392, lwe-a-seed=314230, correct=true, noise mean=-1.3281, noise std=10.7210, max|.|=28, online=3.6888885s
+Run 73: func-seed=20260474, lwe-noise-seed=54393, lwe-a-seed=314231, correct=true, noise mean=-0.2891, noise std=10.8406, max|.|=28, online=3.6747006s
+Run 74: func-seed=20260475, lwe-noise-seed=54394, lwe-a-seed=314232, correct=true, noise mean=-0.2734, noise std=11.0515, max|.|=32, online=3.6972302s
+Run 75: func-seed=20260476, lwe-noise-seed=54395, lwe-a-seed=314233, correct=true, noise mean=0.0938, noise std=10.9062, max|.|=34, online=3.785987s
+Run 76: func-seed=20260477, lwe-noise-seed=54396, lwe-a-seed=314234, correct=true, noise mean=0.7188, noise std=10.0809, max|.|=26, online=3.788979s
+Run 77: func-seed=20260478, lwe-noise-seed=54397, lwe-a-seed=314235, correct=true, noise mean=-0.0781, noise std=11.0945, max|.|=39, online=3.814406s
+Run 78: func-seed=20260479, lwe-noise-seed=54398, lwe-a-seed=314236, correct=true, noise mean=0.2266, noise std=10.1514, max|.|=25, online=3.7872515s
+Run 79: func-seed=20260480, lwe-noise-seed=54399, lwe-a-seed=314237, correct=true, noise mean=-0.9453, noise std=10.0392, max|.|=29, online=3.7981888s
+Run 80: func-seed=20260481, lwe-noise-seed=54400, lwe-a-seed=314238, correct=true, noise mean=2.0625, noise std=11.2484, max|.|=32, online=3.7791749s
+Run 81: func-seed=20260482, lwe-noise-seed=54401, lwe-a-seed=314239, correct=true, noise mean=-1.0234, noise std=11.0450, max|.|=40, online=3.7615515s
+Run 82: func-seed=20260483, lwe-noise-seed=54402, lwe-a-seed=314240, correct=true, noise mean=0.9062, noise std=11.0046, max|.|=31, online=3.7589381s
+Run 83: func-seed=20260484, lwe-noise-seed=54403, lwe-a-seed=314241, correct=true, noise mean=-1.5234, noise std=10.9008, max|.|=31, online=3.8192049s
+Run 84: func-seed=20260485, lwe-noise-seed=54404, lwe-a-seed=314242, correct=true, noise mean=-0.5469, noise std=10.5910, max|.|=34, online=3.8617838s
+Run 85: func-seed=20260486, lwe-noise-seed=54405, lwe-a-seed=314243, correct=true, noise mean=0.8750, noise std=9.7316, max|.|=26, online=3.8897372s
+Run 86: func-seed=20260487, lwe-noise-seed=54406, lwe-a-seed=314244, correct=true, noise mean=0.3906, noise std=11.6614, max|.|=37, online=3.9451053s
+Run 87: func-seed=20260488, lwe-noise-seed=54407, lwe-a-seed=314245, correct=true, noise mean=0.7812, noise std=10.8087, max|.|=31, online=3.9106009s
+Run 88: func-seed=20260489, lwe-noise-seed=54408, lwe-a-seed=314246, correct=true, noise mean=0.2500, noise std=10.1065, max|.|=28, online=3.9054182s
+Run 89: func-seed=20260490, lwe-noise-seed=54409, lwe-a-seed=314247, correct=true, noise mean=1.6016, noise std=11.4948, max|.|=28, online=3.8982431s
+Run 90: func-seed=20260491, lwe-noise-seed=54410, lwe-a-seed=314248, correct=true, noise mean=-0.3125, noise std=10.0201, max|.|=23, online=3.8839397s
+Run 91: func-seed=20260492, lwe-noise-seed=54411, lwe-a-seed=314249, correct=true, noise mean=-0.9297, noise std=10.0570, max|.|=25, online=3.885742s
+Run 92: func-seed=20260493, lwe-noise-seed=54412, lwe-a-seed=314250, correct=true, noise mean=-0.5469, noise std=10.2209, max|.|=28, online=3.8921562s
+Run 93: func-seed=20260494, lwe-noise-seed=54413, lwe-a-seed=314251, correct=true, noise mean=-0.6797, noise std=11.0007, max|.|=29, online=3.8593441s
+Run 94: func-seed=20260495, lwe-noise-seed=54414, lwe-a-seed=314252, correct=true, noise mean=1.1250, noise std=10.5690, max|.|=26, online=3.8913088s
+Run 95: func-seed=20260496, lwe-noise-seed=54415, lwe-a-seed=314253, correct=true, noise mean=0.0938, noise std=9.8421, max|.|=28, online=3.8822409s
+Run 96: func-seed=20260497, lwe-noise-seed=54416, lwe-a-seed=314254, correct=true, noise mean=-0.7344, noise std=10.0378, max|.|=31, online=3.8864226s
+Run 97: func-seed=20260498, lwe-noise-seed=54417, lwe-a-seed=314255, correct=true, noise mean=0.1875, noise std=11.0607, max|.|=34, online=3.8904787s
+Run 98: func-seed=20260499, lwe-noise-seed=54418, lwe-a-seed=314256, correct=true, noise mean=0.4766, noise std=9.7700, max|.|=26, online=3.8712057s
+Run 99: func-seed=20260500, lwe-noise-seed=54419, lwe-a-seed=314257, correct=true, noise mean=-1.3516, noise std=10.3506, max|.|=31, online=3.7867355s
+Run 100: func-seed=20260501, lwe-noise-seed=54420, lwe-a-seed=314258, correct=true, noise mean=-1.2422, noise std=10.2483, max|.|=33, online=3.8049522s
+=====================================
+
+========== Aggregated Summary ==========
+runs                       : 100
+all runs correct           : true
+average dynamic setup      : 8.986384ms
+  - fresh LWE ciphertexts  : 3.350329ms
+  - function table         : 53.055µs
+  - LUT build              : 5.583ms
+  - poly plaintext prep    : 0s
+average online total       : 3.77333977s
+  - pack LWE->BFV          : 901.296883ms
+  - poly eval total        : 2.612709611s
+    · build basis/powers   : 1.164150574s
+    · square x^(r/2)       : 52.364056ms
+    · build grouped powers : 436.780033ms
+    · ParallelLT           : 898.372295ms
+      · LT matrix build    : 9.127672ms
+      · hoisted decompose  : 7.611494ms
+      · baby rotations     : 91.671223ms
+      · giant rotations    : 150.424612ms
+      · pt-ct multiplies   : 462.503569ms
+      · first-stage other  : 157.710523ms
+      · second stage       : 0s
+      · post-process       : 8.315892ms
+      · post-LT rescale    : 1.754568ms
+      · other residual     : 9.252742ms
+    · pointwise multiply   : 8.350107ms
+    · rotate-and-sum       : 33.195428ms
+    · x^d / power gen      : 14.872961ms
+    · outer combine        : 0s
+    · leading term         : 3.693948ms
+    · final add            : 837.29µs
+  - SlotToCoeff            : 230.544746ms
+  - BFV-side key switch    : 11.978586ms
+  - correction mul         : 49.979µs
+  - external mod switch    : 16.606416ms
+  - sample extraction      : 153.549µs
+noise mean (all samples)   : 0.0545
+noise std dev (all samples): 10.6473
+max |noise| (all samples)  : 41
+total wall time            : 6m28.6223256s
+========================================
+
+$ go run .   -N 32768 -m 1 -n 2048 -d 65536   -T 65537 -p 512   -func random   -logq "52,40,40,40,40,40,40,40,40,40,40,40,40,40,40,40,40,40,40,30"   -logp "50,50" -run 100 -final-ks-level-p=-1 -final-ks-pow2-base=1
+========== BFV Parameters ==========
+N                         : 32768
+m                         : 1
+n (LWE dimension)         : 2048
+input degree d            : 65536
+degree mode               : 9bit power-of-two path (d is a power of two)
+poly-eval algorithm       : alg5
+poly LT baby steps        : auto
+poly LT giant steps       : auto
+plaintext modulus T       : 65537
+message modulus p         : 512
+alpha=floor(T/p)          : 128
+MaxLevel                  : 19
+LogQ bits                 : [52 40 40 40 40 40 40 40 40 40 40 40 40 40 40 40 40 40 40 30]
+LogP bits                 : [50 50]
+Q factors                 : [4503599627763713 1099512938497 1099510054913 1099514314753 1099507695617 1099515691009 1099516280833 1099516542977 1099516870657 1099506515969 1099518246913 1099504549889 1099503894529 1099503370241 1099520606209 1099502714881 1099502518273 1099521458177 1099501731841 1073872897]
+P factors                 : [1125899908022273 1125899908612097]
+====================================
+
+---------- One-time preprocessing ----------
+SlotToCoeff basis         : 0s
+SlotToCoeff diagonals     : 0s
+SlotToCoeff plaintexts    : 0s
+key generation            : 2.3760105s
+encrypted secret blocks   : 30.0895ms
+target secret build       : 16.2182ms
+evaluation-key generation : 71.1147ms
+poly-eval Galois keys     : 15
+SlotToCoeff rotations     : 0
+packing Galois keys       : 16
+distinct Galois keys total: 15
+leveled rotation keys     : true
+rotation level plan       : pack=18, polyPower=2, polyGrouped=2, polyLT-in=2, polyLT-out=2, final-sum=1, poly-out=1
+rotation keys total size  : 1.54 GiB (1651565280 bytes)
+  - LevelQ=18 (#Q=19, logQ≈772 bits): 15 keys, 1.54 GiB (1651565280 bytes)
+relinearization key size  : 110.00 MiB (115347376 bytes)
+final key-switch key level: LevelQ=0 (#Q=1, logQ≈53 bits), LevelP=-1 (no P)
+final key-switch pow2 base: 2^1
+final key-switch params   : Q-only parameter view, PCount=0
+final key-switch key size : 26.00 MiB (27265912 bytes)
+auxiliary keys total size : 1.67 GiB (1794178568 bytes)
+encrypted secret size     : 10.00 MiB (10486382 bytes)
+one-time preprocessing    : 2.5391156s
+--------------------------------------------
+
+[progress +2.567s] run 1/100: dynamic setup
+[progress +5.832s] run 2/100: dynamic setup
+[progress +9.051s] run 3/100: dynamic setup
+[progress +12.263s] run 4/100: dynamic setup
+[progress +15.35s] run 5/100: dynamic setup
+[progress +18.394s] run 6/100: dynamic setup
+[progress +21.465s] run 7/100: dynamic setup
+[progress +24.47s] run 8/100: dynamic setup
+[progress +27.58s] run 9/100: dynamic setup
+[progress +30.629s] run 10/100: dynamic setup
+[progress +33.7s] run 11/100: dynamic setup
+[progress +36.821s] run 12/100: dynamic setup
+[progress +39.812s] run 13/100: dynamic setup
+[progress +42.928s] run 14/100: dynamic setup
+[progress +46.019s] run 15/100: dynamic setup
+[progress +49.233s] run 16/100: dynamic setup
+[progress +52.395s] run 17/100: dynamic setup
+[progress +55.608s] run 18/100: dynamic setup
+[progress +58.894s] run 19/100: dynamic setup
+[progress +1m2.098s] run 20/100: dynamic setup
+[progress +1m5.277s] run 21/100: dynamic setup
+[progress +1m8.574s] run 22/100: dynamic setup
+[progress +1m11.845s] run 23/100: dynamic setup
+[progress +1m15.081s] run 24/100: dynamic setup
+[progress +1m18.208s] run 25/100: dynamic setup
+[progress +1m21.228s] run 26/100: dynamic setup
+[progress +1m24.341s] run 27/100: dynamic setup
+[progress +1m27.397s] run 28/100: dynamic setup
+[progress +1m30.508s] run 29/100: dynamic setup
+[progress +1m33.616s] run 30/100: dynamic setup
+[progress +1m36.699s] run 31/100: dynamic setup
+[progress +1m39.807s] run 32/100: dynamic setup
+[progress +1m42.916s] run 33/100: dynamic setup
+[progress +1m46.089s] run 34/100: dynamic setup
+[progress +1m49.338s] run 35/100: dynamic setup
+[progress +1m52.581s] run 36/100: dynamic setup
+[progress +1m55.806s] run 37/100: dynamic setup
+[progress +1m59.06s] run 38/100: dynamic setup
+[progress +2m2.314s] run 39/100: dynamic setup
+[progress +2m5.575s] run 40/100: dynamic setup
+[progress +2m8.87s] run 41/100: dynamic setup
+[progress +2m12.103s] run 42/100: dynamic setup
+[progress +2m15.326s] run 43/100: dynamic setup
+[progress +2m18.424s] run 44/100: dynamic setup
+[progress +2m21.548s] run 45/100: dynamic setup
+[progress +2m24.592s] run 46/100: dynamic setup
+[progress +2m27.646s] run 47/100: dynamic setup
+[progress +2m30.734s] run 48/100: dynamic setup
+[progress +2m33.805s] run 49/100: dynamic setup
+[progress +2m36.918s] run 50/100: dynamic setup
+[progress +2m40.048s] run 51/100: dynamic setup
+[progress +2m43.134s] run 52/100: dynamic setup
+[progress +2m46.283s] run 53/100: dynamic setup
+[progress +2m49.427s] run 54/100: dynamic setup
+[progress +2m52.657s] run 55/100: dynamic setup
+[progress +2m55.809s] run 56/100: dynamic setup
+[progress +2m59.058s] run 57/100: dynamic setup
+[progress +3m2.263s] run 58/100: dynamic setup
+[progress +3m5.517s] run 59/100: dynamic setup
+[progress +3m8.703s] run 60/100: dynamic setup
+[progress +3m11.925s] run 61/100: dynamic setup
+[progress +3m15.174s] run 62/100: dynamic setup
+[progress +3m18.236s] run 63/100: dynamic setup
+[progress +3m21.338s] run 64/100: dynamic setup
+[progress +3m24.372s] run 65/100: dynamic setup
+[progress +3m27.456s] run 66/100: dynamic setup
+[progress +3m30.542s] run 67/100: dynamic setup
+[progress +3m33.584s] run 68/100: dynamic setup
+[progress +3m36.669s] run 69/100: dynamic setup
+[progress +3m39.727s] run 70/100: dynamic setup
+[progress +3m42.754s] run 71/100: dynamic setup
+[progress +3m45.878s] run 72/100: dynamic setup
+[progress +3m49.097s] run 73/100: dynamic setup
+[progress +3m52.358s] run 74/100: dynamic setup
+[progress +3m55.643s] run 75/100: dynamic setup
+[progress +3m58.899s] run 76/100: dynamic setup
+[progress +4m2.173s] run 77/100: dynamic setup
+[progress +4m5.365s] run 78/100: dynamic setup
+[progress +4m8.673s] run 79/100: dynamic setup
+[progress +4m11.915s] run 80/100: dynamic setup
+[progress +4m15.152s] run 81/100: dynamic setup
+[progress +4m18.24s] run 82/100: dynamic setup
+[progress +4m21.381s] run 83/100: dynamic setup
+[progress +4m24.479s] run 84/100: dynamic setup
+[progress +4m27.58s] run 85/100: dynamic setup
+[progress +4m30.749s] run 86/100: dynamic setup
+[progress +4m33.905s] run 87/100: dynamic setup
+[progress +4m36.907s] run 88/100: dynamic setup
+[progress +4m40.015s] run 89/100: dynamic setup
+[progress +4m43.142s] run 90/100: dynamic setup
+[progress +4m46.361s] run 91/100: dynamic setup
+[progress +4m49.57s] run 92/100: dynamic setup
+[progress +4m52.86s] run 93/100: dynamic setup
+[progress +4m56.186s] run 94/100: dynamic setup
+[progress +4m59.426s] run 95/100: dynamic setup
+[progress +5m2.576s] run 96/100: dynamic setup
+[progress +5m5.802s] run 97/100: dynamic setup
+[progress +5m9.107s] run 98/100: dynamic setup
+[progress +5m12.407s] run 99/100: dynamic setup
+[progress +5m15.585s] run 100/100: dynamic setup
+========== Per-run Summary ==========
+Run 1: func-seed=20260402, lwe-noise-seed=54321, lwe-a-seed=314159, correct=true, noise mean=7.0000, noise std=0.0000, max|.|=7, online=3.2526335s
+Run 2: func-seed=20260403, lwe-noise-seed=54322, lwe-a-seed=314160, correct=true, noise mean=-4.0000, noise std=0.0000, max|.|=4, online=3.2097699s
+Run 3: func-seed=20260404, lwe-noise-seed=54323, lwe-a-seed=314161, correct=true, noise mean=-2.0000, noise std=0.0000, max|.|=2, online=3.2066016s
+Run 4: func-seed=20260405, lwe-noise-seed=54324, lwe-a-seed=314162, correct=true, noise mean=0.0000, noise std=0.0000, max|.|=0, online=3.0715279s
+Run 5: func-seed=20260406, lwe-noise-seed=54325, lwe-a-seed=314163, correct=true, noise mean=-4.0000, noise std=0.0000, max|.|=4, online=3.0336092s
+Run 6: func-seed=20260407, lwe-noise-seed=54326, lwe-a-seed=314164, correct=true, noise mean=-5.0000, noise std=0.0000, max|.|=5, online=3.0652285s
+Run 7: func-seed=20260408, lwe-noise-seed=54327, lwe-a-seed=314165, correct=true, noise mean=22.0000, noise std=0.0000, max|.|=22, online=2.9871444s
+Run 8: func-seed=20260409, lwe-noise-seed=54328, lwe-a-seed=314166, correct=true, noise mean=1.0000, noise std=0.0000, max|.|=1, online=3.1015865s
+Run 9: func-seed=20260410, lwe-noise-seed=54329, lwe-a-seed=314167, correct=true, noise mean=-2.0000, noise std=0.0000, max|.|=2, online=3.0347317s
+Run 10: func-seed=20260411, lwe-noise-seed=54330, lwe-a-seed=314168, correct=true, noise mean=7.0000, noise std=0.0000, max|.|=7, online=3.0614747s
+Run 11: func-seed=20260412, lwe-noise-seed=54331, lwe-a-seed=314169, correct=true, noise mean=6.0000, noise std=0.0000, max|.|=6, online=3.1107245s
+Run 12: func-seed=20260413, lwe-noise-seed=54332, lwe-a-seed=314170, correct=true, noise mean=-6.0000, noise std=0.0000, max|.|=6, online=2.9809063s
+Run 13: func-seed=20260414, lwe-noise-seed=54333, lwe-a-seed=314171, correct=true, noise mean=16.0000, noise std=0.0000, max|.|=16, online=3.1030539s
+Run 14: func-seed=20260415, lwe-noise-seed=54334, lwe-a-seed=314172, correct=true, noise mean=4.0000, noise std=0.0000, max|.|=4, online=3.0812573s
+Run 15: func-seed=20260416, lwe-noise-seed=54335, lwe-a-seed=314173, correct=true, noise mean=-2.0000, noise std=0.0000, max|.|=2, online=3.2021194s
+Run 16: func-seed=20260417, lwe-noise-seed=54336, lwe-a-seed=314174, correct=true, noise mean=0.0000, noise std=0.0000, max|.|=0, online=3.1513652s
+Run 17: func-seed=20260418, lwe-noise-seed=54337, lwe-a-seed=314175, correct=true, noise mean=-7.0000, noise std=0.0000, max|.|=7, online=3.204815s
+Run 18: func-seed=20260419, lwe-noise-seed=54338, lwe-a-seed=314176, correct=true, noise mean=-14.0000, noise std=0.0000, max|.|=14, online=3.2756145s
+Run 19: func-seed=20260420, lwe-noise-seed=54339, lwe-a-seed=314177, correct=true, noise mean=9.0000, noise std=0.0000, max|.|=9, online=3.1926859s
+Run 20: func-seed=20260421, lwe-noise-seed=54340, lwe-a-seed=314178, correct=true, noise mean=-9.0000, noise std=0.0000, max|.|=9, online=3.1665904s
+Run 21: func-seed=20260422, lwe-noise-seed=54341, lwe-a-seed=314179, correct=true, noise mean=-3.0000, noise std=0.0000, max|.|=3, online=3.2883311s
+Run 22: func-seed=20260423, lwe-noise-seed=54342, lwe-a-seed=314180, correct=true, noise mean=7.0000, noise std=0.0000, max|.|=7, online=3.260203s
+Run 23: func-seed=20260424, lwe-noise-seed=54343, lwe-a-seed=314181, correct=true, noise mean=0.0000, noise std=0.0000, max|.|=0, online=3.2223751s
+Run 24: func-seed=20260425, lwe-noise-seed=54344, lwe-a-seed=314182, correct=true, noise mean=-32.0000, noise std=0.0000, max|.|=32, online=3.1164039s
+Run 25: func-seed=20260426, lwe-noise-seed=54345, lwe-a-seed=314183, correct=true, noise mean=5.0000, noise std=0.0000, max|.|=5, online=3.0100744s
+Run 26: func-seed=20260427, lwe-noise-seed=54346, lwe-a-seed=314184, correct=true, noise mean=8.0000, noise std=0.0000, max|.|=8, online=3.103465s
+Run 27: func-seed=20260428, lwe-noise-seed=54347, lwe-a-seed=314185, correct=true, noise mean=8.0000, noise std=0.0000, max|.|=8, online=3.0451753s
+Run 28: func-seed=20260429, lwe-noise-seed=54348, lwe-a-seed=314186, correct=true, noise mean=7.0000, noise std=0.0000, max|.|=7, online=3.0985271s
+Run 29: func-seed=20260430, lwe-noise-seed=54349, lwe-a-seed=314187, correct=true, noise mean=10.0000, noise std=0.0000, max|.|=10, online=3.100303s
+Run 30: func-seed=20260431, lwe-noise-seed=54350, lwe-a-seed=314188, correct=true, noise mean=6.0000, noise std=0.0000, max|.|=6, online=3.0780203s
+Run 31: func-seed=20260432, lwe-noise-seed=54351, lwe-a-seed=314189, correct=true, noise mean=1.0000, noise std=0.0000, max|.|=1, online=3.0921997s
+Run 32: func-seed=20260433, lwe-noise-seed=54352, lwe-a-seed=314190, correct=true, noise mean=-7.0000, noise std=0.0000, max|.|=7, online=3.0979418s
+Run 33: func-seed=20260434, lwe-noise-seed=54353, lwe-a-seed=314191, correct=true, noise mean=-2.0000, noise std=0.0000, max|.|=2, online=3.1613294s
+Run 34: func-seed=20260435, lwe-noise-seed=54354, lwe-a-seed=314192, correct=true, noise mean=-4.0000, noise std=0.0000, max|.|=4, online=3.2405187s
+Run 35: func-seed=20260436, lwe-noise-seed=54355, lwe-a-seed=314193, correct=true, noise mean=-5.0000, noise std=0.0000, max|.|=5, online=3.2330503s
+Run 36: func-seed=20260437, lwe-noise-seed=54356, lwe-a-seed=314194, correct=true, noise mean=15.0000, noise std=0.0000, max|.|=15, online=3.2144291s
+Run 37: func-seed=20260438, lwe-noise-seed=54357, lwe-a-seed=314195, correct=true, noise mean=2.0000, noise std=0.0000, max|.|=2, online=3.2440356s
+Run 38: func-seed=20260439, lwe-noise-seed=54358, lwe-a-seed=314196, correct=true, noise mean=-4.0000, noise std=0.0000, max|.|=4, online=3.242433s
+Run 39: func-seed=20260440, lwe-noise-seed=54359, lwe-a-seed=314197, correct=true, noise mean=12.0000, noise std=0.0000, max|.|=12, online=3.2486951s
+Run 40: func-seed=20260441, lwe-noise-seed=54360, lwe-a-seed=314198, correct=true, noise mean=14.0000, noise std=0.0000, max|.|=14, online=3.2834609s
+Run 41: func-seed=20260442, lwe-noise-seed=54361, lwe-a-seed=314199, correct=true, noise mean=13.0000, noise std=0.0000, max|.|=13, online=3.2277025s
+Run 42: func-seed=20260443, lwe-noise-seed=54362, lwe-a-seed=314200, correct=true, noise mean=-1.0000, noise std=0.0000, max|.|=1, online=3.206386s
+Run 43: func-seed=20260444, lwe-noise-seed=54363, lwe-a-seed=314201, correct=true, noise mean=10.0000, noise std=0.0000, max|.|=10, online=3.089271s
+Run 44: func-seed=20260445, lwe-noise-seed=54364, lwe-a-seed=314202, correct=true, noise mean=-23.0000, noise std=0.0000, max|.|=23, online=3.1114444s
+Run 45: func-seed=20260446, lwe-noise-seed=54365, lwe-a-seed=314203, correct=true, noise mean=-2.0000, noise std=0.0000, max|.|=2, online=3.0338782s
+Run 46: func-seed=20260447, lwe-noise-seed=54366, lwe-a-seed=314204, correct=true, noise mean=0.0000, noise std=0.0000, max|.|=0, online=3.0428399s
+Run 47: func-seed=20260448, lwe-noise-seed=54367, lwe-a-seed=314205, correct=true, noise mean=-1.0000, noise std=0.0000, max|.|=1, online=3.0791267s
+Run 48: func-seed=20260449, lwe-noise-seed=54368, lwe-a-seed=314206, correct=true, noise mean=3.0000, noise std=0.0000, max|.|=3, online=3.0554354s
+Run 49: func-seed=20260450, lwe-noise-seed=54369, lwe-a-seed=314207, correct=true, noise mean=3.0000, noise std=0.0000, max|.|=3, online=3.102177s
+Run 50: func-seed=20260451, lwe-noise-seed=54370, lwe-a-seed=314208, correct=true, noise mean=-4.0000, noise std=0.0000, max|.|=4, online=3.1204397s
+Run 51: func-seed=20260452, lwe-noise-seed=54371, lwe-a-seed=314209, correct=true, noise mean=-19.0000, noise std=0.0000, max|.|=19, online=3.0769036s
+Run 52: func-seed=20260453, lwe-noise-seed=54372, lwe-a-seed=314210, correct=true, noise mean=-3.0000, noise std=0.0000, max|.|=3, online=3.1374642s
+Run 53: func-seed=20260454, lwe-noise-seed=54373, lwe-a-seed=314211, correct=true, noise mean=-1.0000, noise std=0.0000, max|.|=1, online=3.1320237s
+Run 54: func-seed=20260455, lwe-noise-seed=54374, lwe-a-seed=314212, correct=true, noise mean=1.0000, noise std=0.0000, max|.|=1, online=3.215853s
+Run 55: func-seed=20260456, lwe-noise-seed=54375, lwe-a-seed=314213, correct=true, noise mean=6.0000, noise std=0.0000, max|.|=6, online=3.1360726s
+Run 56: func-seed=20260457, lwe-noise-seed=54376, lwe-a-seed=314214, correct=true, noise mean=-14.0000, noise std=0.0000, max|.|=14, online=3.2345239s
+Run 57: func-seed=20260458, lwe-noise-seed=54377, lwe-a-seed=314215, correct=true, noise mean=-8.0000, noise std=0.0000, max|.|=8, online=3.1938963s
+Run 58: func-seed=20260459, lwe-noise-seed=54378, lwe-a-seed=314216, correct=true, noise mean=-11.0000, noise std=0.0000, max|.|=11, online=3.2490877s
+Run 59: func-seed=20260460, lwe-noise-seed=54379, lwe-a-seed=314217, correct=true, noise mean=3.0000, noise std=0.0000, max|.|=3, online=3.1698462s
+Run 60: func-seed=20260461, lwe-noise-seed=54380, lwe-a-seed=314218, correct=true, noise mean=1.0000, noise std=0.0000, max|.|=1, online=3.2132111s
+Run 61: func-seed=20260462, lwe-noise-seed=54381, lwe-a-seed=314219, correct=true, noise mean=24.0000, noise std=0.0000, max|.|=24, online=3.2371493s
+Run 62: func-seed=20260463, lwe-noise-seed=54382, lwe-a-seed=314220, correct=true, noise mean=7.0000, noise std=0.0000, max|.|=7, online=3.0535563s
+Run 63: func-seed=20260464, lwe-noise-seed=54383, lwe-a-seed=314221, correct=true, noise mean=-15.0000, noise std=0.0000, max|.|=15, online=3.0867809s
+Run 64: func-seed=20260465, lwe-noise-seed=54384, lwe-a-seed=314222, correct=true, noise mean=-11.0000, noise std=0.0000, max|.|=11, online=3.0264081s
+Run 65: func-seed=20260466, lwe-noise-seed=54385, lwe-a-seed=314223, correct=true, noise mean=8.0000, noise std=0.0000, max|.|=8, online=3.0710536s
+Run 66: func-seed=20260467, lwe-noise-seed=54386, lwe-a-seed=314224, correct=true, noise mean=-6.0000, noise std=0.0000, max|.|=6, online=3.0783946s
+Run 67: func-seed=20260468, lwe-noise-seed=54387, lwe-a-seed=314225, correct=true, noise mean=2.0000, noise std=0.0000, max|.|=2, online=3.0306309s
+Run 68: func-seed=20260469, lwe-noise-seed=54388, lwe-a-seed=314226, correct=true, noise mean=-7.0000, noise std=0.0000, max|.|=7, online=3.0732454s
+Run 69: func-seed=20260470, lwe-noise-seed=54389, lwe-a-seed=314227, correct=true, noise mean=5.0000, noise std=0.0000, max|.|=5, online=3.0482445s
+Run 70: func-seed=20260471, lwe-noise-seed=54390, lwe-a-seed=314228, correct=true, noise mean=10.0000, noise std=0.0000, max|.|=10, online=3.0175275s
+Run 71: func-seed=20260472, lwe-noise-seed=54391, lwe-a-seed=314229, correct=true, noise mean=6.0000, noise std=0.0000, max|.|=6, online=3.1123487s
+Run 72: func-seed=20260473, lwe-noise-seed=54392, lwe-a-seed=314230, correct=true, noise mean=-24.0000, noise std=0.0000, max|.|=24, online=3.2088474s
+Run 73: func-seed=20260474, lwe-noise-seed=54393, lwe-a-seed=314231, correct=true, noise mean=-7.0000, noise std=0.0000, max|.|=7, online=3.2534508s
+Run 74: func-seed=20260475, lwe-noise-seed=54394, lwe-a-seed=314232, correct=true, noise mean=12.0000, noise std=0.0000, max|.|=12, online=3.2721599s
+Run 75: func-seed=20260476, lwe-noise-seed=54395, lwe-a-seed=314233, correct=true, noise mean=-4.0000, noise std=0.0000, max|.|=4, online=3.2455697s
+Run 76: func-seed=20260477, lwe-noise-seed=54396, lwe-a-seed=314234, correct=true, noise mean=-1.0000, noise std=0.0000, max|.|=1, online=3.2570203s
+Run 77: func-seed=20260478, lwe-noise-seed=54397, lwe-a-seed=314235, correct=true, noise mean=-1.0000, noise std=0.0000, max|.|=1, online=3.1778858s
+Run 78: func-seed=20260479, lwe-noise-seed=54398, lwe-a-seed=314236, correct=true, noise mean=-1.0000, noise std=0.0000, max|.|=1, online=3.2997407s
+Run 79: func-seed=20260480, lwe-noise-seed=54399, lwe-a-seed=314237, correct=true, noise mean=11.0000, noise std=0.0000, max|.|=11, online=3.2309139s
+Run 80: func-seed=20260481, lwe-noise-seed=54400, lwe-a-seed=314238, correct=true, noise mean=-19.0000, noise std=0.0000, max|.|=19, online=3.2255179s
+Run 81: func-seed=20260482, lwe-noise-seed=54401, lwe-a-seed=314239, correct=true, noise mean=-7.0000, noise std=0.0000, max|.|=7, online=3.0790765s
+Run 82: func-seed=20260483, lwe-noise-seed=54402, lwe-a-seed=314240, correct=true, noise mean=-8.0000, noise std=0.0000, max|.|=8, online=3.1298494s
+Run 83: func-seed=20260484, lwe-noise-seed=54403, lwe-a-seed=314241, correct=true, noise mean=14.0000, noise std=0.0000, max|.|=14, online=3.0860948s
+Run 84: func-seed=20260485, lwe-noise-seed=54404, lwe-a-seed=314242, correct=true, noise mean=-7.0000, noise std=0.0000, max|.|=7, online=3.0946616s
+Run 85: func-seed=20260486, lwe-noise-seed=54405, lwe-a-seed=314243, correct=true, noise mean=20.0000, noise std=0.0000, max|.|=20, online=3.1544371s
+Run 86: func-seed=20260487, lwe-noise-seed=54406, lwe-a-seed=314244, correct=true, noise mean=-7.0000, noise std=0.0000, max|.|=7, online=3.1454508s
+Run 87: func-seed=20260488, lwe-noise-seed=54407, lwe-a-seed=314245, correct=true, noise mean=-14.0000, noise std=0.0000, max|.|=14, online=2.9911818s
+Run 88: func-seed=20260489, lwe-noise-seed=54408, lwe-a-seed=314246, correct=true, noise mean=-19.0000, noise std=0.0000, max|.|=19, online=3.0917614s
+Run 89: func-seed=20260490, lwe-noise-seed=54409, lwe-a-seed=314247, correct=true, noise mean=6.0000, noise std=0.0000, max|.|=6, online=3.1176045s
+Run 90: func-seed=20260491, lwe-noise-seed=54410, lwe-a-seed=314248, correct=true, noise mean=11.0000, noise std=0.0000, max|.|=11, online=3.2081021s
+Run 91: func-seed=20260492, lwe-noise-seed=54411, lwe-a-seed=314249, correct=true, noise mean=-8.0000, noise std=0.0000, max|.|=8, online=3.1985251s
+Run 92: func-seed=20260493, lwe-noise-seed=54412, lwe-a-seed=314250, correct=true, noise mean=-1.0000, noise std=0.0000, max|.|=1, online=3.2795292s
+Run 93: func-seed=20260494, lwe-noise-seed=54413, lwe-a-seed=314251, correct=true, noise mean=3.0000, noise std=0.0000, max|.|=3, online=3.315824s
+Run 94: func-seed=20260495, lwe-noise-seed=54414, lwe-a-seed=314252, correct=true, noise mean=-10.0000, noise std=0.0000, max|.|=10, online=3.2294644s
+Run 95: func-seed=20260496, lwe-noise-seed=54415, lwe-a-seed=314253, correct=true, noise mean=-1.0000, noise std=0.0000, max|.|=1, online=3.1447942s
+Run 96: func-seed=20260497, lwe-noise-seed=54416, lwe-a-seed=314254, correct=true, noise mean=16.0000, noise std=0.0000, max|.|=16, online=3.2105077s
+Run 97: func-seed=20260498, lwe-noise-seed=54417, lwe-a-seed=314255, correct=true, noise mean=8.0000, noise std=0.0000, max|.|=8, online=3.2941333s
+Run 98: func-seed=20260499, lwe-noise-seed=54418, lwe-a-seed=314256, correct=true, noise mean=17.0000, noise std=0.0000, max|.|=17, online=3.2893188s
+Run 99: func-seed=20260500, lwe-noise-seed=54419, lwe-a-seed=314257, correct=true, noise mean=13.0000, noise std=0.0000, max|.|=13, online=3.1676241s
+Run 100: func-seed=20260501, lwe-noise-seed=54420, lwe-a-seed=314258, correct=true, noise mean=-7.0000, noise std=0.0000, max|.|=7, online=3.0049122s
+=====================================
+
+========== Aggregated Summary ==========
+runs                       : 100
+all runs correct           : true
+average dynamic setup      : 5.248039ms
+  - fresh LWE ciphertexts  : 0s
+  - function table         : 0s
+  - LUT build              : 5.248039ms
+  - poly plaintext prep    : 0s
+average online total       : 3.149412944s
+  - pack LWE->BFV          : 1.365052242s
+  - poly eval total        : 1.752590986s
+    · build basis/powers   : 1.593712658s
+    · square x^(r/2)       : 15.563848ms
+    · build grouped powers : 5.444625ms
+    · ParallelLT           : 110.096651ms
+      · LT matrix build    : 52.789µs
+      · hoisted decompose  : 3.340535ms
+      · baby rotations     : 3.857014ms
+      · giant rotations    : 0s
+      · pt-ct multiplies   : 2.462906ms
+      · first-stage other  : 639.104µs
+      · second stage       : 92.838696ms
+      · post-process       : 6.804968ms
+      · post-LT rescale    : 0s
+      · other residual     : 100.639µs
+    · pointwise multiply   : 9.136963ms
+    · rotate-and-sum       : 4.7359ms
+    · x^d / power gen      : 10.529416ms
+    · outer combine        : 0s
+    · leading term         : 2.973781ms
+    · final add            : 397.144µs
+  - SlotToCoeff            : 0s
+  - BFV-side key switch    : 14.769015ms
+  - correction mul         : 50.92µs
+  - external mod switch    : 16.949781ms
+  - sample extraction      : 0s
+noise mean (all samples)   : 0.1600
+noise std dev (all samples): 10.1071
+max |noise| (all samples)  : 32
+total wall time            : 5m18.6018382s
+========================================
+
+$ ./fb.exe -N 65536 -m 1 -n 2048 -d 1048575 -logq "52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,30"  -logp "55,55,55,55,55,55" -T 786433 -p 4096 -run 100 -final-ks-level-p=-1 -final-ks-pow2-base=1
+========== BFV Parameters ==========
+N                         : 65536
+m                         : 1
+n (LWE dimension)         : 2048
+input degree d            : 1048575
+degree mode               : d+1 power-of-two path
+internal eval degree      : 1048576
+poly-eval algorithm       : alg5
+poly LT baby steps        : auto
+poly LT giant steps       : auto
+plaintext modulus T       : 786433
+message modulus p         : 4096
+alpha=floor(T/p)          : 192
+MaxLevel                  : 25
+LogQ bits                 : [52 52 52 52 52 52 52 52 52 52 52 52 52 52 52 52 52 52 52 52 52 52 52 52 52 30]
+LogP bits                 : [55 55 55 55 55 55]
+Q factors                 : [4503599627763713 4503599626321921 4503599628943361 4503599625535489 4503599629467649 4503599625404417 4503599631433729 4503599623045121 4503599632613377 4503599621472257 4503599634579457 4503599635628033 4503599619112961 4503599637200897 4503599615311873 4503599640477697 4503599641526273 4503599613214721 4503599642836993 4503599643885569 4503599645065217 4503599647817729 4503599607840769 4503599606661121 4503599651094529 1073872897]
+P factors                 : [36028797019488257 36028797023420417 36028797014376449 36028797024206849 36028797013327873 36028797025124353]
+====================================
+
+---------- One-time preprocessing ----------
+SlotToCoeff basis         : 0s
+SlotToCoeff diagonals     : 0s
+SlotToCoeff plaintexts    : 0s
+key generation            : 4.1719566s
+encrypted secret blocks   : 56.669ms
+target secret build       : 25.9005ms
+evaluation-key generation : 147.3484ms
+poly-eval Galois keys     : 18
+SlotToCoeff rotations     : 0
+packing Galois keys       : 17
+distinct Galois keys total: 18
+leveled rotation keys     : true
+rotation level plan       : pack=24, polyPower=7, polyGrouped=3, polyLT-in=3, polyLT-out=2, final-sum=1, poly-out=1
+rotation keys total size  : 2.44 GiB (2621484512 bytes)
+  - LevelQ=3 (#Q=4, logQ≈208 bits): 2 keys, 20.00 MiB (20972000 bytes)
+  - LevelQ=24 (#Q=25, logQ≈1301 bits): 16 keys, 2.42 GiB (2600512512 bytes)
+relinearization key size  : 160.00 MiB (167774976 bytes)
+final key-switch key level: LevelQ=0 (#Q=1, logQ≈53 bits), LevelP=-1 (no P)
+final key-switch pow2 base: 2^1
+final key-switch params   : Q-only parameter view, PCount=0
+final key-switch key size : 52.00 MiB (54528888 bytes)
+auxiliary keys total size : 2.65 GiB (2843788376 bytes)
+encrypted secret size     : 26.00 MiB (27263694 bytes)
+one-time preprocessing    : 4.4769003s
+--------------------------------------------
+
+[progress +4.538s] run 1/100: dynamic setup
+[progress +13.202s] run 2/100: dynamic setup
+[progress +21.954s] run 3/100: dynamic setup
+[progress +30.416s] run 4/100: dynamic setup
+[progress +38.73s] run 5/100: dynamic setup
+[progress +47.014s] run 6/100: dynamic setup
+[progress +55.488s] run 7/100: dynamic setup
+[progress +1m4.036s] run 8/100: dynamic setup
+[progress +1m12.554s] run 9/100: dynamic setup
+[progress +1m21.084s] run 10/100: dynamic setup
+[progress +1m29.375s] run 11/100: dynamic setup
+[progress +1m37.706s] run 12/100: dynamic setup
+[progress +1m46.038s] run 13/100: dynamic setup
+[progress +1m54.468s] run 14/100: dynamic setup
+[progress +2m3.064s] run 15/100: dynamic setup
+[progress +2m11.712s] run 16/100: dynamic setup
+[progress +2m20.335s] run 17/100: dynamic setup
+[progress +2m28.757s] run 18/100: dynamic setup
+[progress +2m37.132s] run 19/100: dynamic setup
+[progress +2m45.561s] run 20/100: dynamic setup
+[progress +2m53.95s] run 21/100: dynamic setup
+[progress +3m2.586s] run 22/100: dynamic setup
+[progress +3m11.094s] run 23/100: dynamic setup
+[progress +3m19.535s] run 24/100: dynamic setup
+[progress +3m27.879s] run 25/100: dynamic setup
+[progress +3m36.117s] run 26/100: dynamic setup
+[progress +3m44.441s] run 27/100: dynamic setup
+[progress +3m52.725s] run 28/100: dynamic setup
+[progress +4m1.345s] run 29/100: dynamic setup
+[progress +4m9.854s] run 30/100: dynamic setup
+[progress +4m18.442s] run 31/100: dynamic setup
+[progress +4m26.867s] run 32/100: dynamic setup
+[progress +4m35.229s] run 33/100: dynamic setup
+[progress +4m43.498s] run 34/100: dynamic setup
+[progress +4m51.87s] run 35/100: dynamic setup
+[progress +5m0.409s] run 36/100: dynamic setup
+[progress +5m9s] run 37/100: dynamic setup
+[progress +5m17.535s] run 38/100: dynamic setup
+[progress +5m26.054s] run 39/100: dynamic setup
+[progress +5m34.654s] run 40/100: dynamic setup
+[progress +5m43.085s] run 41/100: dynamic setup
+[progress +5m51.597s] run 42/100: dynamic setup
+[progress +6m0.221s] run 43/100: dynamic setup
+[progress +6m8.905s] run 44/100: dynamic setup
+[progress +6m17.537s] run 45/100: dynamic setup
+[progress +6m26.157s] run 46/100: dynamic setup
+[progress +6m34.718s] run 47/100: dynamic setup
+[progress +6m43.301s] run 48/100: dynamic setup
+[progress +6m51.932s] run 49/100: dynamic setup
+[progress +7m0.555s] run 50/100: dynamic setup
+[progress +7m9.177s] run 51/100: dynamic setup
+[progress +7m17.788s] run 52/100: dynamic setup
+[progress +7m26.403s] run 53/100: dynamic setup
+[progress +7m34.985s] run 54/100: dynamic setup
+[progress +7m43.565s] run 55/100: dynamic setup
+[progress +7m52.15s] run 56/100: dynamic setup
+[progress +8m0.848s] run 57/100: dynamic setup
+[progress +8m9.458s] run 58/100: dynamic setup
+[progress +8m18.091s] run 59/100: dynamic setup
+[progress +8m26.685s] run 60/100: dynamic setup
+[progress +8m35.18s] run 61/100: dynamic setup
+[progress +8m43.763s] run 62/100: dynamic setup
+[progress +8m52.274s] run 63/100: dynamic setup
+[progress +9m0.778s] run 64/100: dynamic setup
+[progress +9m9.348s] run 65/100: dynamic setup
+[progress +9m17.992s] run 66/100: dynamic setup
+[progress +9m26.463s] run 67/100: dynamic setup
+[progress +9m34.753s] run 68/100: dynamic setup
+[progress +9m43.008s] run 69/100: dynamic setup
+[progress +9m51.244s] run 70/100: dynamic setup
+[progress +9m59.818s] run 71/100: dynamic setup
+[progress +10m8.419s] run 72/100: dynamic setup
+[progress +10m16.98s] run 73/100: dynamic setup
+[progress +10m25.468s] run 74/100: dynamic setup
+[progress +10m33.847s] run 75/100: dynamic setup
+[progress +10m42.194s] run 76/100: dynamic setup
+[progress +10m50.537s] run 77/100: dynamic setup
+[progress +10m59.067s] run 78/100: dynamic setup
+[progress +11m7.599s] run 79/100: dynamic setup
+[progress +11m16.138s] run 80/100: dynamic setup
+[progress +11m24.59s] run 81/100: dynamic setup
+[progress +11m32.951s] run 82/100: dynamic setup
+[progress +11m41.297s] run 83/100: dynamic setup
+[progress +11m49.64s] run 84/100: dynamic setup
+[progress +11m58.173s] run 85/100: dynamic setup
+[progress +12m6.743s] run 86/100: dynamic setup
+[progress +12m15.336s] run 87/100: dynamic setup
+[progress +12m23.792s] run 88/100: dynamic setup
+[progress +12m32.071s] run 89/100: dynamic setup
+[progress +12m40.346s] run 90/100: dynamic setup
+[progress +12m48.654s] run 91/100: dynamic setup
+[progress +12m57.123s] run 92/100: dynamic setup
+[progress +13m5.585s] run 93/100: dynamic setup
+[progress +13m14.067s] run 94/100: dynamic setup
+[progress +13m22.542s] run 95/100: dynamic setup
+[progress +13m30.746s] run 96/100: dynamic setup
+[progress +13m39.009s] run 97/100: dynamic setup
+[progress +13m47.216s] run 98/100: dynamic setup
+[progress +13m55.641s] run 99/100: dynamic setup
+[progress +14m4.268s] run 100/100: dynamic setup
+========== Per-run Summary ==========
+Run 1: func-seed=20260402, lwe-noise-seed=54321, lwe-a-seed=314159, correct=true, noise mean=-14.0000, noise std=0.0000, max|.|=14, online=8.5292938s
+Run 2: func-seed=20260403, lwe-noise-seed=54322, lwe-a-seed=314160, correct=true, noise mean=4.0000, noise std=0.0000, max|.|=4, online=8.6276315s
+Run 3: func-seed=20260404, lwe-noise-seed=54323, lwe-a-seed=314161, correct=true, noise mean=10.0000, noise std=0.0000, max|.|=10, online=8.3390005s
+Run 4: func-seed=20260405, lwe-noise-seed=54324, lwe-a-seed=314162, correct=true, noise mean=-9.0000, noise std=0.0000, max|.|=9, online=8.1938948s
+Run 5: func-seed=20260406, lwe-noise-seed=54325, lwe-a-seed=314163, correct=true, noise mean=2.0000, noise std=0.0000, max|.|=2, online=8.1654774s
+Run 6: func-seed=20260407, lwe-noise-seed=54326, lwe-a-seed=314164, correct=true, noise mean=-3.0000, noise std=0.0000, max|.|=3, online=8.3499308s
+Run 7: func-seed=20260408, lwe-noise-seed=54327, lwe-a-seed=314165, correct=true, noise mean=9.0000, noise std=0.0000, max|.|=9, online=8.4232581s
+Run 8: func-seed=20260409, lwe-noise-seed=54328, lwe-a-seed=314166, correct=true, noise mean=5.0000, noise std=0.0000, max|.|=5, online=8.3944113s
+Run 9: func-seed=20260410, lwe-noise-seed=54329, lwe-a-seed=314167, correct=true, noise mean=9.0000, noise std=0.0000, max|.|=9, online=8.4007613s
+Run 10: func-seed=20260411, lwe-noise-seed=54330, lwe-a-seed=314168, correct=true, noise mean=21.0000, noise std=0.0000, max|.|=21, online=8.1745543s
+Run 11: func-seed=20260412, lwe-noise-seed=54331, lwe-a-seed=314169, correct=true, noise mean=0.0000, noise std=0.0000, max|.|=0, online=8.2009124s
+Run 12: func-seed=20260413, lwe-noise-seed=54332, lwe-a-seed=314170, correct=true, noise mean=-3.0000, noise std=0.0000, max|.|=3, online=8.2041471s
+Run 13: func-seed=20260414, lwe-noise-seed=54333, lwe-a-seed=314171, correct=true, noise mean=1.0000, noise std=0.0000, max|.|=1, online=8.30641s
+Run 14: func-seed=20260415, lwe-noise-seed=54334, lwe-a-seed=314172, correct=true, noise mean=7.0000, noise std=0.0000, max|.|=7, online=8.4787296s
+Run 15: func-seed=20260416, lwe-noise-seed=54335, lwe-a-seed=314173, correct=true, noise mean=11.0000, noise std=0.0000, max|.|=11, online=8.5256353s
+Run 16: func-seed=20260417, lwe-noise-seed=54336, lwe-a-seed=314174, correct=true, noise mean=26.0000, noise std=0.0000, max|.|=26, online=8.4939277s
+Run 17: func-seed=20260418, lwe-noise-seed=54337, lwe-a-seed=314175, correct=true, noise mean=20.0000, noise std=0.0000, max|.|=20, online=8.3008489s
+Run 18: func-seed=20260419, lwe-noise-seed=54338, lwe-a-seed=314176, correct=true, noise mean=11.0000, noise std=0.0000, max|.|=11, online=8.2553564s
+Run 19: func-seed=20260420, lwe-noise-seed=54339, lwe-a-seed=314177, correct=true, noise mean=-4.0000, noise std=0.0000, max|.|=4, online=8.310031s
+Run 20: func-seed=20260421, lwe-noise-seed=54340, lwe-a-seed=314178, correct=true, noise mean=-9.0000, noise std=0.0000, max|.|=9, online=8.2660426s
+Run 21: func-seed=20260422, lwe-noise-seed=54341, lwe-a-seed=314179, correct=true, noise mean=24.0000, noise std=0.0000, max|.|=24, online=8.5102085s
+Run 22: func-seed=20260423, lwe-noise-seed=54342, lwe-a-seed=314180, correct=true, noise mean=-7.0000, noise std=0.0000, max|.|=7, online=8.3822741s
+Run 23: func-seed=20260424, lwe-noise-seed=54343, lwe-a-seed=314181, correct=true, noise mean=-7.0000, noise std=0.0000, max|.|=7, online=8.3222402s
+Run 24: func-seed=20260425, lwe-noise-seed=54344, lwe-a-seed=314182, correct=true, noise mean=-3.0000, noise std=0.0000, max|.|=3, online=8.2191605s
+Run 25: func-seed=20260426, lwe-noise-seed=54345, lwe-a-seed=314183, correct=true, noise mean=21.0000, noise std=0.0000, max|.|=21, online=8.1141669s
+Run 26: func-seed=20260427, lwe-noise-seed=54346, lwe-a-seed=314184, correct=true, noise mean=12.0000, noise std=0.0000, max|.|=12, online=8.2033825s
+Run 27: func-seed=20260428, lwe-noise-seed=54347, lwe-a-seed=314185, correct=true, noise mean=5.0000, noise std=0.0000, max|.|=5, online=8.1559288s
+Run 28: func-seed=20260429, lwe-noise-seed=54348, lwe-a-seed=314186, correct=true, noise mean=6.0000, noise std=0.0000, max|.|=6, online=8.4972746s
+Run 29: func-seed=20260430, lwe-noise-seed=54349, lwe-a-seed=314187, correct=true, noise mean=-11.0000, noise std=0.0000, max|.|=11, online=8.3902679s
+Run 30: func-seed=20260431, lwe-noise-seed=54350, lwe-a-seed=314188, correct=true, noise mean=-12.0000, noise std=0.0000, max|.|=12, online=8.468991s
+Run 31: func-seed=20260432, lwe-noise-seed=54351, lwe-a-seed=314189, correct=true, noise mean=-4.0000, noise std=0.0000, max|.|=4, online=8.2972039s
+Run 32: func-seed=20260433, lwe-noise-seed=54352, lwe-a-seed=314190, correct=true, noise mean=1.0000, noise std=0.0000, max|.|=1, online=8.2377542s
+Run 33: func-seed=20260434, lwe-noise-seed=54353, lwe-a-seed=314191, correct=true, noise mean=-6.0000, noise std=0.0000, max|.|=6, online=8.1449282s
+Run 34: func-seed=20260435, lwe-noise-seed=54354, lwe-a-seed=314192, correct=true, noise mean=-5.0000, noise std=0.0000, max|.|=5, online=8.2481761s
+Run 35: func-seed=20260436, lwe-noise-seed=54355, lwe-a-seed=314193, correct=true, noise mean=-2.0000, noise std=0.0000, max|.|=2, online=8.424433s
+Run 36: func-seed=20260437, lwe-noise-seed=54356, lwe-a-seed=314194, correct=true, noise mean=-6.0000, noise std=0.0000, max|.|=6, online=8.4610775s
+Run 37: func-seed=20260438, lwe-noise-seed=54357, lwe-a-seed=314195, correct=true, noise mean=-9.0000, noise std=0.0000, max|.|=9, online=8.4077148s
+Run 38: func-seed=20260439, lwe-noise-seed=54358, lwe-a-seed=314196, correct=true, noise mean=-4.0000, noise std=0.0000, max|.|=4, online=8.3976427s
+Run 39: func-seed=20260440, lwe-noise-seed=54359, lwe-a-seed=314197, correct=true, noise mean=-4.0000, noise std=0.0000, max|.|=4, online=8.4729679s
+Run 40: func-seed=20260441, lwe-noise-seed=54360, lwe-a-seed=314198, correct=true, noise mean=2.0000, noise std=0.0000, max|.|=2, online=8.3078411s
+Run 41: func-seed=20260442, lwe-noise-seed=54361, lwe-a-seed=314199, correct=true, noise mean=7.0000, noise std=0.0000, max|.|=7, online=8.3881283s
+Run 42: func-seed=20260443, lwe-noise-seed=54362, lwe-a-seed=314200, correct=true, noise mean=19.0000, noise std=0.0000, max|.|=19, online=8.4995686s
+Run 43: func-seed=20260444, lwe-noise-seed=54363, lwe-a-seed=314201, correct=true, noise mean=-11.0000, noise std=0.0000, max|.|=11, online=8.5552713s
+Run 44: func-seed=20260445, lwe-noise-seed=54364, lwe-a-seed=314202, correct=true, noise mean=2.0000, noise std=0.0000, max|.|=2, online=8.5080748s
+Run 45: func-seed=20260446, lwe-noise-seed=54365, lwe-a-seed=314203, correct=true, noise mean=-6.0000, noise std=0.0000, max|.|=6, online=8.4909056s
+Run 46: func-seed=20260447, lwe-noise-seed=54366, lwe-a-seed=314204, correct=true, noise mean=11.0000, noise std=0.0000, max|.|=11, online=8.4371347s
+Run 47: func-seed=20260448, lwe-noise-seed=54367, lwe-a-seed=314205, correct=true, noise mean=-21.0000, noise std=0.0000, max|.|=21, online=8.4606136s
+Run 48: func-seed=20260449, lwe-noise-seed=54368, lwe-a-seed=314206, correct=true, noise mean=10.0000, noise std=0.0000, max|.|=10, online=8.5050837s
+Run 49: func-seed=20260450, lwe-noise-seed=54369, lwe-a-seed=314207, correct=true, noise mean=3.0000, noise std=0.0000, max|.|=3, online=8.4943994s
+Run 50: func-seed=20260451, lwe-noise-seed=54370, lwe-a-seed=314208, correct=true, noise mean=-1.0000, noise std=0.0000, max|.|=1, online=8.4943008s
+Run 51: func-seed=20260452, lwe-noise-seed=54371, lwe-a-seed=314209, correct=true, noise mean=6.0000, noise std=0.0000, max|.|=6, online=8.4854687s
+Run 52: func-seed=20260453, lwe-noise-seed=54372, lwe-a-seed=314210, correct=true, noise mean=1.0000, noise std=0.0000, max|.|=1, online=8.4918772s
+Run 53: func-seed=20260454, lwe-noise-seed=54373, lwe-a-seed=314211, correct=true, noise mean=-6.0000, noise std=0.0000, max|.|=6, online=8.4642846s
+Run 54: func-seed=20260455, lwe-noise-seed=54374, lwe-a-seed=314212, correct=true, noise mean=0.0000, noise std=0.0000, max|.|=0, online=8.4503199s
+Run 55: func-seed=20260456, lwe-noise-seed=54375, lwe-a-seed=314213, correct=true, noise mean=0.0000, noise std=0.0000, max|.|=0, online=8.4647893s
+Run 56: func-seed=20260457, lwe-noise-seed=54376, lwe-a-seed=314214, correct=true, noise mean=14.0000, noise std=0.0000, max|.|=14, online=8.576278s
+Run 57: func-seed=20260458, lwe-noise-seed=54377, lwe-a-seed=314215, correct=true, noise mean=-20.0000, noise std=0.0000, max|.|=20, online=8.4820408s
+Run 58: func-seed=20260459, lwe-noise-seed=54378, lwe-a-seed=314216, correct=true, noise mean=3.0000, noise std=0.0000, max|.|=3, online=8.5135391s
+Run 59: func-seed=20260460, lwe-noise-seed=54379, lwe-a-seed=314217, correct=true, noise mean=-6.0000, noise std=0.0000, max|.|=6, online=8.4644143s
+Run 60: func-seed=20260461, lwe-noise-seed=54380, lwe-a-seed=314218, correct=true, noise mean=0.0000, noise std=0.0000, max|.|=0, online=8.3685879s
+Run 61: func-seed=20260462, lwe-noise-seed=54381, lwe-a-seed=314219, correct=true, noise mean=-11.0000, noise std=0.0000, max|.|=11, online=8.4594701s
+Run 62: func-seed=20260463, lwe-noise-seed=54382, lwe-a-seed=314220, correct=true, noise mean=18.0000, noise std=0.0000, max|.|=18, online=8.382788s
+Run 63: func-seed=20260464, lwe-noise-seed=54383, lwe-a-seed=314221, correct=true, noise mean=-24.0000, noise std=0.0000, max|.|=24, online=8.376608s
+Run 64: func-seed=20260465, lwe-noise-seed=54384, lwe-a-seed=314222, correct=true, noise mean=12.0000, noise std=0.0000, max|.|=12, online=8.443299s
+Run 65: func-seed=20260466, lwe-noise-seed=54385, lwe-a-seed=314223, correct=true, noise mean=-20.0000, noise std=0.0000, max|.|=20, online=8.5186412s
+Run 66: func-seed=20260467, lwe-noise-seed=54386, lwe-a-seed=314224, correct=true, noise mean=3.0000, noise std=0.0000, max|.|=3, online=8.3422137s
+Run 67: func-seed=20260468, lwe-noise-seed=54387, lwe-a-seed=314225, correct=true, noise mean=-18.0000, noise std=0.0000, max|.|=18, online=8.1667487s
+Run 68: func-seed=20260469, lwe-noise-seed=54388, lwe-a-seed=314226, correct=true, noise mean=-14.0000, noise std=0.0000, max|.|=14, online=8.1305766s
+Run 69: func-seed=20260470, lwe-noise-seed=54389, lwe-a-seed=314227, correct=true, noise mean=3.0000, noise std=0.0000, max|.|=3, online=8.1136174s
+Run 70: func-seed=20260471, lwe-noise-seed=54390, lwe-a-seed=314228, correct=true, noise mean=-8.0000, noise std=0.0000, max|.|=8, online=8.4431756s
+Run 71: func-seed=20260472, lwe-noise-seed=54391, lwe-a-seed=314229, correct=true, noise mean=-8.0000, noise std=0.0000, max|.|=8, online=8.479052s
+Run 72: func-seed=20260473, lwe-noise-seed=54392, lwe-a-seed=314230, correct=true, noise mean=-7.0000, noise std=0.0000, max|.|=7, online=8.4357208s
+Run 73: func-seed=20260474, lwe-noise-seed=54393, lwe-a-seed=314231, correct=true, noise mean=-14.0000, noise std=0.0000, max|.|=14, online=8.361274s
+Run 74: func-seed=20260475, lwe-noise-seed=54394, lwe-a-seed=314232, correct=true, noise mean=-17.0000, noise std=0.0000, max|.|=17, online=8.2569488s
+Run 75: func-seed=20260476, lwe-noise-seed=54395, lwe-a-seed=314233, correct=true, noise mean=10.0000, noise std=0.0000, max|.|=10, online=8.2192302s
+Run 76: func-seed=20260477, lwe-noise-seed=54396, lwe-a-seed=314234, correct=true, noise mean=4.0000, noise std=0.0000, max|.|=4, online=8.2256673s
+Run 77: func-seed=20260478, lwe-noise-seed=54397, lwe-a-seed=314235, correct=true, noise mean=9.0000, noise std=0.0000, max|.|=9, online=8.407173s
+Run 78: func-seed=20260479, lwe-noise-seed=54398, lwe-a-seed=314236, correct=true, noise mean=-1.0000, noise std=0.0000, max|.|=1, online=8.4009149s
+Run 79: func-seed=20260480, lwe-noise-seed=54399, lwe-a-seed=314237, correct=true, noise mean=6.0000, noise std=0.0000, max|.|=6, online=8.4206446s
+Run 80: func-seed=20260481, lwe-noise-seed=54400, lwe-a-seed=314238, correct=true, noise mean=0.0000, noise std=0.0000, max|.|=0, online=8.3265621s
+Run 81: func-seed=20260482, lwe-noise-seed=54401, lwe-a-seed=314239, correct=true, noise mean=7.0000, noise std=0.0000, max|.|=7, online=8.2383731s
+Run 82: func-seed=20260483, lwe-noise-seed=54402, lwe-a-seed=314240, correct=true, noise mean=12.0000, noise std=0.0000, max|.|=12, online=8.2264527s
+Run 83: func-seed=20260484, lwe-noise-seed=54403, lwe-a-seed=314241, correct=true, noise mean=3.0000, noise std=0.0000, max|.|=3, online=8.2133114s
+Run 84: func-seed=20260485, lwe-noise-seed=54404, lwe-a-seed=314242, correct=true, noise mean=4.0000, noise std=0.0000, max|.|=4, online=8.4092819s
+Run 85: func-seed=20260486, lwe-noise-seed=54405, lwe-a-seed=314243, correct=true, noise mean=-11.0000, noise std=0.0000, max|.|=11, online=8.4424028s
+Run 86: func-seed=20260487, lwe-noise-seed=54406, lwe-a-seed=314244, correct=true, noise mean=5.0000, noise std=0.0000, max|.|=5, online=8.4689484s
+Run 87: func-seed=20260488, lwe-noise-seed=54407, lwe-a-seed=314245, correct=true, noise mean=5.0000, noise std=0.0000, max|.|=5, online=8.3357054s
+Run 88: func-seed=20260489, lwe-noise-seed=54408, lwe-a-seed=314246, correct=true, noise mean=-9.0000, noise std=0.0000, max|.|=9, online=8.150647s
+Run 89: func-seed=20260490, lwe-noise-seed=54409, lwe-a-seed=314247, correct=true, noise mean=12.0000, noise std=0.0000, max|.|=12, online=8.1508861s
+Run 90: func-seed=20260491, lwe-noise-seed=54410, lwe-a-seed=314248, correct=true, noise mean=-22.0000, noise std=0.0000, max|.|=22, online=8.1869887s
+Run 91: func-seed=20260492, lwe-noise-seed=54411, lwe-a-seed=314249, correct=true, noise mean=-1.0000, noise std=0.0000, max|.|=1, online=8.347994s
+Run 92: func-seed=20260493, lwe-noise-seed=54412, lwe-a-seed=314250, correct=true, noise mean=-2.0000, noise std=0.0000, max|.|=2, online=8.3378337s
+Run 93: func-seed=20260494, lwe-noise-seed=54413, lwe-a-seed=314251, correct=true, noise mean=20.0000, noise std=0.0000, max|.|=20, online=8.3546729s
+Run 94: func-seed=20260495, lwe-noise-seed=54414, lwe-a-seed=314252, correct=true, noise mean=-8.0000, noise std=0.0000, max|.|=8, online=8.3532329s
+Run 95: func-seed=20260496, lwe-noise-seed=54415, lwe-a-seed=314253, correct=true, noise mean=-9.0000, noise std=0.0000, max|.|=9, online=8.0819102s
+Run 96: func-seed=20260497, lwe-noise-seed=54416, lwe-a-seed=314254, correct=true, noise mean=10.0000, noise std=0.0000, max|.|=10, online=8.1393024s
+Run 97: func-seed=20260498, lwe-noise-seed=54417, lwe-a-seed=314255, correct=true, noise mean=13.0000, noise std=0.0000, max|.|=13, online=8.0772131s
+Run 98: func-seed=20260499, lwe-noise-seed=54418, lwe-a-seed=314256, correct=true, noise mean=6.0000, noise std=0.0000, max|.|=6, online=8.3074989s
+Run 99: func-seed=20260500, lwe-noise-seed=54419, lwe-a-seed=314257, correct=true, noise mean=2.0000, noise std=0.0000, max|.|=2, online=8.4984751s
+Run 100: func-seed=20260501, lwe-noise-seed=54420, lwe-a-seed=314258, correct=true, noise mean=-4.0000, noise std=0.0000, max|.|=4, online=8.4847572s
+=====================================
+
+========== Aggregated Summary ==========
+runs                       : 100
+all runs correct           : true
+average dynamic setup      : 106.114464ms
+  - fresh LWE ciphertexts  : 86.292µs
+  - function table         : 0s
+  - LUT build              : 106.028172ms
+  - poly plaintext prep    : 0s
+average online total       : 8.359151837s
+  - pack LWE->BFV          : 2.967420732s
+  - poly eval total        : 5.326969117s
+    · build basis/powers   : 4.328615163s
+    · square x^(r/2)       : 61.655376ms
+    · build grouped powers : 348.218631ms
+    · ParallelLT           : 454.619518ms
+      · LT matrix build    : 1.011385ms
+      · hoisted decompose  : 6.371145ms
+      · baby rotations     : 45.10261ms
+      · giant rotations    : 64.58514ms
+      · pt-ct multiplies   : 55.232092ms
+      · first-stage other  : 14.384335ms
+      · second stage       : 241.665521ms
+      · post-process       : 22.093849ms
+      · post-LT rescale    : 3.56338ms
+      · other residual     : 610.061µs
+    · pointwise multiply   : 23.252185ms
+    · rotate-and-sum       : 66.471859ms
+    · x^d / power gen      : 34.341467ms
+    · outer combine        : 0s
+    · leading term         : 8.880808ms
+    · final add            : 911.086µs
+  - SlotToCoeff            : 0s
+  - BFV-side key switch    : 30.815968ms
+  - correction mul         : 231.948µs
+  - external mod switch    : 33.714072ms
+  - sample extraction      : 0s
+noise mean (all samples)   : 0.4600
+noise std dev (all samples): 10.6042
+max |noise| (all samples)  : 26
+total wall time            : 14m12.873893s
+========================================
+
+$ ./fb.exe -N 65536 -m 1 -n 2048 -d 4194303 -func random   -logq "52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,30"   -logp "55,55,55,55,55,55" -T 2752513 -p 16384 -run 100 -final-ks-level-p=-1 -final-ks-pow2-base=1
+========== BFV Parameters ==========
+N                         : 65536
+m                         : 1
+n (LWE dimension)         : 2048
+input degree d            : 4194303
+degree mode               : d+1 power-of-two path
+internal eval degree      : 4194304
+poly-eval algorithm       : alg5
+poly LT baby steps        : auto
+poly LT giant steps       : auto
+plaintext modulus T       : 2752513
+message modulus p         : 16384
+alpha=floor(T/p)          : 168
+MaxLevel                  : 26
+LogQ bits                 : [52 52 52 52 52 52 52 52 52 52 52 52 52 52 52 52 52 52 52 52 52 52 52 52 52 52 30]
+LogP bits                 : [55 55 55 55 55 55]
+Q factors                 : [4503599627763713 4503599626321921 4503599628943361 4503599625535489 4503599629467649 4503599625404417 4503599631433729 4503599623045121 4503599632613377 4503599621472257 4503599634579457 4503599635628033 4503599619112961 4503599637200897 4503599615311873 4503599640477697 4503599641526273 4503599613214721 4503599642836993 4503599643885569 4503599645065217 4503599647817729 4503599607840769 4503599606661121 4503599651094529 4503599605350401 1073872897]
+P factors                 : [36028797019488257 36028797023420417 36028797014376449 36028797024206849 36028797013327873 36028797025124353]
+====================================
+
+---------- One-time preprocessing ----------
+SlotToCoeff basis         : 0s
+SlotToCoeff diagonals     : 0s
+SlotToCoeff plaintexts    : 0s
+key generation            : 4.2965025s
+encrypted secret blocks   : 53.5271ms
+target secret build       : 25.336ms
+evaluation-key generation : 140.51ms
+poly-eval Galois keys     : 24
+SlotToCoeff rotations     : 0
+packing Galois keys       : 17
+distinct Galois keys total: 24
+leveled rotation keys     : true
+rotation level plan       : pack=25, polyPower=8, polyGrouped=2, polyLT-in=2, polyLT-out=2, final-sum=1, poly-out=1
+rotation keys total size  : 2.57 GiB (2759899136 bytes)
+  - LevelQ=2 (#Q=3, logQ≈157 bits): 8 keys, 72.00 MiB (75499264 bytes)
+  - LevelQ=25 (#Q=26, logQ≈1353 bits): 16 keys, 2.50 GiB (2684399872 bytes)
+relinearization key size  : 165.00 MiB (173017936 bytes)
+final key-switch key level: LevelQ=0 (#Q=1, logQ≈53 bits), LevelP=-1 (no P)
+final key-switch pow2 base: 2^1
+final key-switch params   : Q-only parameter view, PCount=0
+final key-switch key size : 52.00 MiB (54528888 bytes)
+auxiliary keys total size : 2.78 GiB (2987445960 bytes)
+encrypted secret size     : 27.00 MiB (28312286 bytes)
+one-time preprocessing    : 4.6146482s
+--------------------------------------------
+
+[progress +4.675s] run 1/100: dynamic setup
+[progress +14.381s] run 2/100: dynamic setup
+[progress +24.374s] run 3/100: dynamic setup
+[progress +34.348s] run 4/100: dynamic setup
+[progress +44.467s] run 5/100: dynamic setup
+[progress +54.468s] run 6/100: dynamic setup
+[progress +1m4.421s] run 7/100: dynamic setup
+[progress +1m14.369s] run 8/100: dynamic setup
+[progress +1m24.322s] run 9/100: dynamic setup
+[progress +1m34.484s] run 10/100: dynamic setup
+[progress +1m44.528s] run 11/100: dynamic setup
+[progress +1m54.472s] run 12/100: dynamic setup
+[progress +2m4.306s] run 13/100: dynamic setup
+[progress +2m14.147s] run 14/100: dynamic setup
+[progress +2m24.165s] run 15/100: dynamic setup
+[progress +2m34.333s] run 16/100: dynamic setup
+[progress +2m44.568s] run 17/100: dynamic setup
+[progress +2m54.522s] run 18/100: dynamic setup
+[progress +3m4.487s] run 19/100: dynamic setup
+[progress +3m14.51s] run 20/100: dynamic setup
+[progress +3m24.539s] run 21/100: dynamic setup
+[progress +3m34.638s] run 22/100: dynamic setup
+[progress +3m44.693s] run 23/100: dynamic setup
+[progress +3m54.626s] run 24/100: dynamic setup
+[progress +4m4.439s] run 25/100: dynamic setup
+[progress +4m14.175s] run 26/100: dynamic setup
+[progress +4m24.093s] run 27/100: dynamic setup
+[progress +4m34.317s] run 28/100: dynamic setup
+[progress +4m44.326s] run 29/100: dynamic setup
+[progress +4m54.271s] run 30/100: dynamic setup
+[progress +5m4.161s] run 31/100: dynamic setup
+[progress +5m13.983s] run 32/100: dynamic setup
+[progress +5m23.985s] run 33/100: dynamic setup
+[progress +5m33.914s] run 34/100: dynamic setup
+[progress +5m43.958s] run 35/100: dynamic setup
+[progress +5m53.901s] run 36/100: dynamic setup
+[progress +6m3.74s] run 37/100: dynamic setup
+[progress +6m13.573s] run 38/100: dynamic setup
+[progress +6m23.482s] run 39/100: dynamic setup
+[progress +6m33.575s] run 40/100: dynamic setup
+[progress +6m43.649s] run 41/100: dynamic setup
+[progress +6m53.589s] run 42/100: dynamic setup
+[progress +7m3.428s] run 43/100: dynamic setup
+[progress +7m13.274s] run 44/100: dynamic setup
+[progress +7m23.209s] run 45/100: dynamic setup
+[progress +7m33.232s] run 46/100: dynamic setup
+[progress +7m43.374s] run 47/100: dynamic setup
+[progress +7m53.354s] run 48/100: dynamic setup
+[progress +8m3.195s] run 49/100: dynamic setup
+[progress +8m13.071s] run 50/100: dynamic setup
+[progress +8m23.067s] run 51/100: dynamic setup
+[progress +8m33.166s] run 52/100: dynamic setup
+[progress +8m43.274s] run 53/100: dynamic setup
+[progress +8m53.295s] run 54/100: dynamic setup
+[progress +9m3.16s] run 55/100: dynamic setup
+[progress +9m13.076s] run 56/100: dynamic setup
+[progress +9m23.078s] run 57/100: dynamic setup
+[progress +9m33.083s] run 58/100: dynamic setup
+[progress +9m42.993s] run 59/100: dynamic setup
+[progress +9m52.905s] run 60/100: dynamic setup
+[progress +10m2.741s] run 61/100: dynamic setup
+[progress +10m12.477s] run 62/100: dynamic setup
+[progress +10m22.378s] run 63/100: dynamic setup
+[progress +10m32.389s] run 64/100: dynamic setup
+[progress +10m42.546s] run 65/100: dynamic setup
+[progress +10m52.615s] run 66/100: dynamic setup
+[progress +11m2.508s] run 67/100: dynamic setup
+[progress +11m12.376s] run 68/100: dynamic setup
+[progress +11m22.351s] run 69/100: dynamic setup
+[progress +11m32.516s] run 70/100: dynamic setup
+[progress +11m42.616s] run 71/100: dynamic setup
+[progress +11m52.651s] run 72/100: dynamic setup
+[progress +12m2.549s] run 73/100: dynamic setup
+[progress +12m12.442s] run 74/100: dynamic setup
+[progress +12m22.415s] run 75/100: dynamic setup
+[progress +12m32.587s] run 76/100: dynamic setup
+[progress +12m42.7s] run 77/100: dynamic setup
+[progress +12m52.688s] run 78/100: dynamic setup
+[progress +13m2.563s] run 79/100: dynamic setup
+[progress +13m12.409s] run 80/100: dynamic setup
+[progress +13m22.289s] run 81/100: dynamic setup
+[progress +13m32.326s] run 82/100: dynamic setup
+[progress +13m42.339s] run 83/100: dynamic setup
+[progress +13m52.4s] run 84/100: dynamic setup
+[progress +14m2.237s] run 85/100: dynamic setup
+[progress +14m12.077s] run 86/100: dynamic setup
+[progress +14m22.006s] run 87/100: dynamic setup
+[progress +14m32.24s] run 88/100: dynamic setup
+[progress +14m42.402s] run 89/100: dynamic setup
+[progress +14m52.518s] run 90/100: dynamic setup
+[progress +15m2.469s] run 91/100: dynamic setup
+[progress +15m12.3s] run 92/100: dynamic setup
+[progress +15m22.341s] run 93/100: dynamic setup
+[progress +15m32.522s] run 94/100: dynamic setup
+[progress +15m42.696s] run 95/100: dynamic setup
+[progress +15m52.635s] run 96/100: dynamic setup
+[progress +16m2.522s] run 97/100: dynamic setup
+[progress +16m12.256s] run 98/100: dynamic setup
+[progress +16m22.161s] run 99/100: dynamic setup
+[progress +16m32.282s] run 100/100: dynamic setup
+========== Per-run Summary ==========
+Run 1: func-seed=20260402, lwe-noise-seed=54321, lwe-a-seed=314159, correct=true, noise mean=10.0000, noise std=0.0000, max|.|=10, online=9.0633972s
+Run 2: func-seed=20260403, lwe-noise-seed=54322, lwe-a-seed=314160, correct=true, noise mean=-6.0000, noise std=0.0000, max|.|=6, online=9.3678937s
+Run 3: func-seed=20260404, lwe-noise-seed=54323, lwe-a-seed=314161, correct=true, noise mean=7.0000, noise std=0.0000, max|.|=7, online=9.3486239s
+Run 4: func-seed=20260405, lwe-noise-seed=54324, lwe-a-seed=314162, correct=true, noise mean=-4.0000, noise std=0.0000, max|.|=4, online=9.49743s
+Run 5: func-seed=20260406, lwe-noise-seed=54325, lwe-a-seed=314163, correct=true, noise mean=4.0000, noise std=0.0000, max|.|=4, online=9.3631691s
+Run 6: func-seed=20260407, lwe-noise-seed=54326, lwe-a-seed=314164, correct=true, noise mean=10.0000, noise std=0.0000, max|.|=10, online=9.3238336s
+Run 7: func-seed=20260408, lwe-noise-seed=54327, lwe-a-seed=314165, correct=true, noise mean=11.0000, noise std=0.0000, max|.|=11, online=9.3160547s
+Run 8: func-seed=20260409, lwe-noise-seed=54328, lwe-a-seed=314166, correct=true, noise mean=-27.0000, noise std=0.0000, max|.|=27, online=9.3308487s
+Run 9: func-seed=20260410, lwe-noise-seed=54329, lwe-a-seed=314167, correct=true, noise mean=3.0000, noise std=0.0000, max|.|=3, online=9.517296s
+Run 10: func-seed=20260411, lwe-noise-seed=54330, lwe-a-seed=314168, correct=true, noise mean=-10.0000, noise std=0.0000, max|.|=10, online=9.4103502s
+Run 11: func-seed=20260412, lwe-noise-seed=54331, lwe-a-seed=314169, correct=true, noise mean=14.0000, noise std=0.0000, max|.|=14, online=9.2987116s
+Run 12: func-seed=20260413, lwe-noise-seed=54332, lwe-a-seed=314170, correct=true, noise mean=-11.0000, noise std=0.0000, max|.|=11, online=9.2116318s
+Run 13: func-seed=20260414, lwe-noise-seed=54333, lwe-a-seed=314171, correct=true, noise mean=0.0000, noise std=0.0000, max|.|=0, online=9.1995492s
+Run 14: func-seed=20260415, lwe-noise-seed=54334, lwe-a-seed=314172, correct=true, noise mean=-24.0000, noise std=0.0000, max|.|=24, online=9.3802727s
+Run 15: func-seed=20260416, lwe-noise-seed=54335, lwe-a-seed=314173, correct=true, noise mean=-9.0000, noise std=0.0000, max|.|=9, online=9.5288208s
+Run 16: func-seed=20260417, lwe-noise-seed=54336, lwe-a-seed=314174, correct=true, noise mean=5.0000, noise std=0.0000, max|.|=5, online=9.597168s
+Run 17: func-seed=20260418, lwe-noise-seed=54337, lwe-a-seed=314175, correct=true, noise mean=4.0000, noise std=0.0000, max|.|=4, online=9.3170991s
+Run 18: func-seed=20260419, lwe-noise-seed=54338, lwe-a-seed=314176, correct=true, noise mean=22.0000, noise std=0.0000, max|.|=22, online=9.344064s
+Run 19: func-seed=20260420, lwe-noise-seed=54339, lwe-a-seed=314177, correct=true, noise mean=-8.0000, noise std=0.0000, max|.|=8, online=9.3881994s
+Run 20: func-seed=20260421, lwe-noise-seed=54340, lwe-a-seed=314178, correct=true, noise mean=9.0000, noise std=0.0000, max|.|=9, online=9.3886156s
+Run 21: func-seed=20260422, lwe-noise-seed=54341, lwe-a-seed=314179, correct=true, noise mean=3.0000, noise std=0.0000, max|.|=3, online=9.4545574s
+Run 22: func-seed=20260423, lwe-noise-seed=54342, lwe-a-seed=314180, correct=true, noise mean=9.0000, noise std=0.0000, max|.|=9, online=9.4347219s
+Run 23: func-seed=20260424, lwe-noise-seed=54343, lwe-a-seed=314181, correct=true, noise mean=-8.0000, noise std=0.0000, max|.|=8, online=9.2944701s
+Run 24: func-seed=20260425, lwe-noise-seed=54344, lwe-a-seed=314182, correct=true, noise mean=-11.0000, noise std=0.0000, max|.|=11, online=9.1787279s
+Run 25: func-seed=20260426, lwe-noise-seed=54345, lwe-a-seed=314183, correct=true, noise mean=13.0000, noise std=0.0000, max|.|=13, online=9.1105585s
+Run 26: func-seed=20260427, lwe-noise-seed=54346, lwe-a-seed=314184, correct=true, noise mean=-10.0000, noise std=0.0000, max|.|=10, online=9.2888482s
+Run 27: func-seed=20260428, lwe-noise-seed=54347, lwe-a-seed=314185, correct=true, noise mean=-13.0000, noise std=0.0000, max|.|=13, online=9.5880335s
+Run 28: func-seed=20260429, lwe-noise-seed=54348, lwe-a-seed=314186, correct=true, noise mean=-8.0000, noise std=0.0000, max|.|=8, online=9.3661725s
+Run 29: func-seed=20260430, lwe-noise-seed=54349, lwe-a-seed=314187, correct=true, noise mean=-3.0000, noise std=0.0000, max|.|=3, online=9.3086757s
+Run 30: func-seed=20260431, lwe-noise-seed=54350, lwe-a-seed=314188, correct=true, noise mean=8.0000, noise std=0.0000, max|.|=8, online=9.2720831s
+Run 31: func-seed=20260432, lwe-noise-seed=54351, lwe-a-seed=314189, correct=true, noise mean=-15.0000, noise std=0.0000, max|.|=15, online=9.1913436s
+Run 32: func-seed=20260433, lwe-noise-seed=54352, lwe-a-seed=314190, correct=true, noise mean=0.0000, noise std=0.0000, max|.|=0, online=9.3666632s
+Run 33: func-seed=20260434, lwe-noise-seed=54353, lwe-a-seed=314191, correct=true, noise mean=-7.0000, noise std=0.0000, max|.|=7, online=9.2986341s
+Run 34: func-seed=20260435, lwe-noise-seed=54354, lwe-a-seed=314192, correct=true, noise mean=13.0000, noise std=0.0000, max|.|=13, online=9.4189295s
+Run 35: func-seed=20260436, lwe-noise-seed=54355, lwe-a-seed=314193, correct=true, noise mean=12.0000, noise std=0.0000, max|.|=12, online=9.3173171s
+Run 36: func-seed=20260437, lwe-noise-seed=54356, lwe-a-seed=314194, correct=true, noise mean=1.0000, noise std=0.0000, max|.|=1, online=9.2090549s
+Run 37: func-seed=20260438, lwe-noise-seed=54357, lwe-a-seed=314195, correct=true, noise mean=5.0000, noise std=0.0000, max|.|=5, online=9.1980312s
+Run 38: func-seed=20260439, lwe-noise-seed=54358, lwe-a-seed=314196, correct=true, noise mean=-10.0000, noise std=0.0000, max|.|=10, online=9.2738324s
+Run 39: func-seed=20260440, lwe-noise-seed=54359, lwe-a-seed=314197, correct=true, noise mean=8.0000, noise std=0.0000, max|.|=8, online=9.4572101s
+Run 40: func-seed=20260441, lwe-noise-seed=54360, lwe-a-seed=314198, correct=true, noise mean=-6.0000, noise std=0.0000, max|.|=6, online=9.444096s
+Run 41: func-seed=20260442, lwe-noise-seed=54361, lwe-a-seed=314199, correct=true, noise mean=-3.0000, noise std=0.0000, max|.|=3, online=9.3163339s
+Run 42: func-seed=20260443, lwe-noise-seed=54362, lwe-a-seed=314200, correct=true, noise mean=-5.0000, noise std=0.0000, max|.|=5, online=9.207597s
+Run 43: func-seed=20260444, lwe-noise-seed=54363, lwe-a-seed=314201, correct=true, noise mean=13.0000, noise std=0.0000, max|.|=13, online=9.2178982s
+Run 44: func-seed=20260445, lwe-noise-seed=54364, lwe-a-seed=314202, correct=true, noise mean=-3.0000, noise std=0.0000, max|.|=3, online=9.3101128s
+Run 45: func-seed=20260446, lwe-noise-seed=54365, lwe-a-seed=314203, correct=true, noise mean=-11.0000, noise std=0.0000, max|.|=11, online=9.388095s
+Run 46: func-seed=20260447, lwe-noise-seed=54366, lwe-a-seed=314204, correct=true, noise mean=-21.0000, noise std=0.0000, max|.|=21, online=9.508876s
+Run 47: func-seed=20260448, lwe-noise-seed=54367, lwe-a-seed=314205, correct=true, noise mean=-6.0000, noise std=0.0000, max|.|=6, online=9.3459419s
+Run 48: func-seed=20260449, lwe-noise-seed=54368, lwe-a-seed=314206, correct=true, noise mean=-14.0000, noise std=0.0000, max|.|=14, online=9.2133785s
+Run 49: func-seed=20260450, lwe-noise-seed=54369, lwe-a-seed=314207, correct=true, noise mean=-16.0000, noise std=0.0000, max|.|=16, online=9.242635s
+Run 50: func-seed=20260451, lwe-noise-seed=54370, lwe-a-seed=314208, correct=true, noise mean=-9.0000, noise std=0.0000, max|.|=9, online=9.3679185s
+Run 51: func-seed=20260452, lwe-noise-seed=54371, lwe-a-seed=314209, correct=true, noise mean=3.0000, noise std=0.0000, max|.|=3, online=9.4565165s
+Run 52: func-seed=20260453, lwe-noise-seed=54372, lwe-a-seed=314210, correct=true, noise mean=-8.0000, noise std=0.0000, max|.|=8, online=9.4622854s
+Run 53: func-seed=20260454, lwe-noise-seed=54373, lwe-a-seed=314211, correct=true, noise mean=8.0000, noise std=0.0000, max|.|=8, online=9.3828918s
+Run 54: func-seed=20260455, lwe-noise-seed=54374, lwe-a-seed=314212, correct=true, noise mean=2.0000, noise std=0.0000, max|.|=2, online=9.2385402s
+Run 55: func-seed=20260456, lwe-noise-seed=54375, lwe-a-seed=314213, correct=true, noise mean=-3.0000, noise std=0.0000, max|.|=3, online=9.2754937s
+Run 56: func-seed=20260457, lwe-noise-seed=54376, lwe-a-seed=314214, correct=true, noise mean=-1.0000, noise std=0.0000, max|.|=1, online=9.3748969s
+Run 57: func-seed=20260458, lwe-noise-seed=54377, lwe-a-seed=314215, correct=true, noise mean=2.0000, noise std=0.0000, max|.|=2, online=9.3761094s
+Run 58: func-seed=20260459, lwe-noise-seed=54378, lwe-a-seed=314216, correct=true, noise mean=5.0000, noise std=0.0000, max|.|=5, online=9.2823462s
+Run 59: func-seed=20260460, lwe-noise-seed=54379, lwe-a-seed=314217, correct=true, noise mean=-4.0000, noise std=0.0000, max|.|=4, online=9.2818351s
+Run 60: func-seed=20260461, lwe-noise-seed=54380, lwe-a-seed=314218, correct=true, noise mean=18.0000, noise std=0.0000, max|.|=18, online=9.2068113s
+Run 61: func-seed=20260462, lwe-noise-seed=54381, lwe-a-seed=314219, correct=true, noise mean=1.0000, noise std=0.0000, max|.|=1, online=9.1018337s
+Run 62: func-seed=20260463, lwe-noise-seed=54382, lwe-a-seed=314220, correct=true, noise mean=-8.0000, noise std=0.0000, max|.|=8, online=9.2619995s
+Run 63: func-seed=20260464, lwe-noise-seed=54383, lwe-a-seed=314221, correct=true, noise mean=-8.0000, noise std=0.0000, max|.|=8, online=9.3840382s
+Run 64: func-seed=20260465, lwe-noise-seed=54384, lwe-a-seed=314222, correct=true, noise mean=1.0000, noise std=0.0000, max|.|=1, online=9.5233114s
+Run 65: func-seed=20260466, lwe-noise-seed=54385, lwe-a-seed=314223, correct=true, noise mean=-5.0000, noise std=0.0000, max|.|=5, online=9.4450696s
+Run 66: func-seed=20260467, lwe-noise-seed=54386, lwe-a-seed=314224, correct=true, noise mean=-9.0000, noise std=0.0000, max|.|=9, online=9.259411s
+Run 67: func-seed=20260468, lwe-noise-seed=54387, lwe-a-seed=314225, correct=true, noise mean=17.0000, noise std=0.0000, max|.|=17, online=9.2359017s
+Run 68: func-seed=20260469, lwe-noise-seed=54388, lwe-a-seed=314226, correct=true, noise mean=13.0000, noise std=0.0000, max|.|=13, online=9.3391938s
+Run 69: func-seed=20260470, lwe-noise-seed=54389, lwe-a-seed=314227, correct=true, noise mean=6.0000, noise std=0.0000, max|.|=6, online=9.5409523s
+Run 70: func-seed=20260471, lwe-noise-seed=54390, lwe-a-seed=314228, correct=true, noise mean=3.0000, noise std=0.0000, max|.|=3, online=9.4629897s
+Run 71: func-seed=20260472, lwe-noise-seed=54391, lwe-a-seed=314229, correct=true, noise mean=-12.0000, noise std=0.0000, max|.|=12, online=9.4069177s
+Run 72: func-seed=20260473, lwe-noise-seed=54392, lwe-a-seed=314230, correct=true, noise mean=-15.0000, noise std=0.0000, max|.|=15, online=9.2590347s
+Run 73: func-seed=20260474, lwe-noise-seed=54393, lwe-a-seed=314231, correct=true, noise mean=-3.0000, noise std=0.0000, max|.|=3, online=9.2657026s
+Run 74: func-seed=20260475, lwe-noise-seed=54394, lwe-a-seed=314232, correct=true, noise mean=4.0000, noise std=0.0000, max|.|=4, online=9.342312s
+Run 75: func-seed=20260476, lwe-noise-seed=54395, lwe-a-seed=314233, correct=true, noise mean=0.0000, noise std=0.0000, max|.|=0, online=9.5462631s
+Run 76: func-seed=20260477, lwe-noise-seed=54396, lwe-a-seed=314234, correct=true, noise mean=-15.0000, noise std=0.0000, max|.|=15, online=9.4773633s
+Run 77: func-seed=20260478, lwe-noise-seed=54397, lwe-a-seed=314235, correct=true, noise mean=-10.0000, noise std=0.0000, max|.|=10, online=9.3633807s
+Run 78: func-seed=20260479, lwe-noise-seed=54398, lwe-a-seed=314236, correct=true, noise mean=-7.0000, noise std=0.0000, max|.|=7, online=9.255362s
+Run 79: func-seed=20260480, lwe-noise-seed=54399, lwe-a-seed=314237, correct=true, noise mean=13.0000, noise std=0.0000, max|.|=13, online=9.2162481s
+Run 80: func-seed=20260481, lwe-noise-seed=54400, lwe-a-seed=314238, correct=true, noise mean=-29.0000, noise std=0.0000, max|.|=29, online=9.2506235s
+Run 81: func-seed=20260482, lwe-noise-seed=54401, lwe-a-seed=314239, correct=true, noise mean=8.0000, noise std=0.0000, max|.|=8, online=9.4068578s
+Run 82: func-seed=20260483, lwe-noise-seed=54402, lwe-a-seed=314240, correct=true, noise mean=0.0000, noise std=0.0000, max|.|=0, online=9.3790976s
+Run 83: func-seed=20260484, lwe-noise-seed=54403, lwe-a-seed=314241, correct=true, noise mean=17.0000, noise std=0.0000, max|.|=17, online=9.4279454s
+Run 84: func-seed=20260485, lwe-noise-seed=54404, lwe-a-seed=314242, correct=true, noise mean=-21.0000, noise std=0.0000, max|.|=21, online=9.2064626s
+Run 85: func-seed=20260486, lwe-noise-seed=54405, lwe-a-seed=314243, correct=true, noise mean=5.0000, noise std=0.0000, max|.|=5, online=9.2163962s
+Run 86: func-seed=20260487, lwe-noise-seed=54406, lwe-a-seed=314244, correct=true, noise mean=3.0000, noise std=0.0000, max|.|=3, online=9.2920855s
+Run 87: func-seed=20260488, lwe-noise-seed=54407, lwe-a-seed=314245, correct=true, noise mean=12.0000, noise std=0.0000, max|.|=12, online=9.5905788s
+Run 88: func-seed=20260489, lwe-noise-seed=54408, lwe-a-seed=314246, correct=true, noise mean=9.0000, noise std=0.0000, max|.|=9, online=9.5188908s
+Run 89: func-seed=20260490, lwe-noise-seed=54409, lwe-a-seed=314247, correct=true, noise mean=12.0000, noise std=0.0000, max|.|=12, online=9.479677s
+Run 90: func-seed=20260491, lwe-noise-seed=54410, lwe-a-seed=314248, correct=true, noise mean=14.0000, noise std=0.0000, max|.|=14, online=9.3142014s
+Run 91: func-seed=20260492, lwe-noise-seed=54411, lwe-a-seed=314249, correct=true, noise mean=-17.0000, noise std=0.0000, max|.|=17, online=9.2036517s
+Run 92: func-seed=20260493, lwe-noise-seed=54412, lwe-a-seed=314250, correct=true, noise mean=-4.0000, noise std=0.0000, max|.|=4, online=9.4066137s
+Run 93: func-seed=20260494, lwe-noise-seed=54413, lwe-a-seed=314251, correct=true, noise mean=-13.0000, noise std=0.0000, max|.|=13, online=9.5523547s
+Run 94: func-seed=20260495, lwe-noise-seed=54414, lwe-a-seed=314252, correct=true, noise mean=-18.0000, noise std=0.0000, max|.|=18, online=9.5426099s
+Run 95: func-seed=20260496, lwe-noise-seed=54415, lwe-a-seed=314253, correct=true, noise mean=28.0000, noise std=0.0000, max|.|=28, online=9.3170572s
+Run 96: func-seed=20260497, lwe-noise-seed=54416, lwe-a-seed=314254, correct=true, noise mean=4.0000, noise std=0.0000, max|.|=4, online=9.2571126s
+Run 97: func-seed=20260498, lwe-noise-seed=54417, lwe-a-seed=314255, correct=true, noise mean=-9.0000, noise std=0.0000, max|.|=9, online=9.1029043s
+Run 98: func-seed=20260499, lwe-noise-seed=54418, lwe-a-seed=314256, correct=true, noise mean=12.0000, noise std=0.0000, max|.|=12, online=9.2795256s
+Run 99: func-seed=20260500, lwe-noise-seed=54419, lwe-a-seed=314257, correct=true, noise mean=-4.0000, noise std=0.0000, max|.|=4, online=9.4950164s
+Run 100: func-seed=20260501, lwe-noise-seed=54420, lwe-a-seed=314258, correct=true, noise mean=-12.0000, noise std=0.0000, max|.|=12, online=9.5293636s
+=====================================
+
+========== Aggregated Summary ==========
+runs                       : 100
+all runs correct           : true
+average dynamic setup      : 586.078796ms
+  - fresh LWE ciphertexts  : 50.536µs
+  - function table         : 20.013µs
+  - LUT build              : 586.008247ms
+  - poly plaintext prep    : 0s
+average online total       : 9.345778149s
+  - pack LWE->BFV          : 3.051048425s
+  - poly eval total        : 6.22972961s
+    · build basis/powers   : 4.722422275s
+    · square x^(r/2)       : 67.650398ms
+    · build grouped powers : 582.606135ms
+    · ParallelLT           : 698.481289ms
+      · LT matrix build    : 8.930169ms
+      · hoisted decompose  : 5.952576ms
+      · baby rotations     : 90.823815ms
+      · giant rotations    : 130.204014ms
+      · pt-ct multiplies   : 201.319349ms
+      · first-stage other  : 68.295938ms
+      · second stage       : 170.102471ms
+      · post-process       : 18.965738ms
+      · post-LT rescale    : 0s
+      · other residual     : 3.887219ms
+    · pointwise multiply   : 22.3818ms
+    · rotate-and-sum       : 98.06616ms
+    · x^d / power gen      : 30.186139ms
+    · outer combine        : 0s
+    · leading term         : 6.893205ms
+    · final add            : 942.523µs
+  - SlotToCoeff            : 0s
+  - BFV-side key switch    : 31.315001ms
+  - correction mul         : 116.933µs
+  - external mod switch    : 33.56818ms
+  - sample extraction      : 0s
+noise mean (all samples)   : -1.0900
+noise std dev (all samples): 11.0545
+max |noise| (all samples)  : 29
+total wall time            : 16m42.4306724s
+========================================
+
+$ ./fb.exe -N 65536 -m 1 -n 2048 -d 8388607 -func random -logq "53,59,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,30" -logp "55,55,55,55,55" -T 8257537 -p 65536 -run 100 -final-ks-level-p=-1 -final-ks-pow2-base=1
+========== BFV Parameters ==========
+N                         : 65536
+m                         : 1
+n (LWE dimension)         : 2048
+input degree d            : 8388607
+degree mode               : d+1 power-of-two path
+internal eval degree      : 8388608
+poly-eval algorithm       : alg5
+poly LT baby steps        : auto
+poly LT giant steps       : auto
+plaintext modulus T       : 8257537
+message modulus p         : 65536
+alpha=floor(T/p)          : 126
+MaxLevel                  : 27
+LogQ bits                 : [53 59 52 52 52 52 52 52 52 52 52 52 52 52 52 52 52 52 52 52 52 52 52 52 52 52 52 30]
+LogP bits                 : [55 55 55 55 55]
+Q factors                 : [9007199255658497 576460752300015617 4503599627763713 4503599626321921 4503599628943361 4503599625535489 4503599629467649 4503599625404417 4503599631433729 4503599623045121 4503599632613377 4503599621472257 4503599634579457 4503599635628033 4503599619112961 4503599637200897 4503599615311873 4503599640477697 4503599641526273 4503599613214721 4503599642836993 4503599643885569 4503599645065217 4503599647817729 4503599607840769 4503599606661121 4503599651094529 1073872897]
+P factors                 : [36028797019488257 36028797023420417 36028797014376449 36028797024206849 36028797013327873]
+====================================
+
+---------- One-time preprocessing ----------
+SlotToCoeff basis         : 0s
+SlotToCoeff diagonals     : 0s
+SlotToCoeff plaintexts    : 0s
+key generation            : 5.2212788s
+encrypted secret blocks   : 65.289ms
+target secret build       : 30.4739ms
+evaluation-key generation : 145.8457ms
+poly-eval Galois keys     : 33
+SlotToCoeff rotations     : 0
+packing Galois keys       : 17
+distinct Galois keys total: 33
+leveled rotation keys     : true
+rotation level plan       : pack=26, polyPower=9, polyGrouped=2, polyLT-in=2, polyLT-out=2, final-sum=1, poly-out=1
+rotation keys total size  : 3.13 GiB (3363889616 bytes)
+  - LevelQ=2 (#Q=3, logQ≈165 bits): 17 keys, 136.00 MiB (142609872 bytes)
+  - LevelQ=26 (#Q=27, logQ≈1413 bits): 16 keys, 3.00 GiB (3221279744 bytes)
+relinearization key size  : 198.00 MiB (207621520 bytes)
+final key-switch key level: LevelQ=0 (#Q=1, logQ≈54 bits), LevelP=-1 (no P)
+final key-switch pow2 base: 2^1
+final key-switch params   : Q-only parameter view, PCount=0
+final key-switch key size : 53.00 MiB (55577520 bytes)
+auxiliary keys total size : 3.38 GiB (3627088656 bytes)
+encrypted secret size     : 28.00 MiB (29360878 bytes)
+one-time preprocessing    : 5.5581406s
+--------------------------------------------
+
+[progress +5.623s] run 1/100: dynamic setup
+[progress +19.814s] run 2/100: dynamic setup
+[progress +34.226s] run 3/100: dynamic setup
+[progress +48.488s] run 4/100: dynamic setup
+[progress +1m2.504s] run 5/100: dynamic setup
+[progress +1m16.536s] run 6/100: dynamic setup
+[progress +1m30.871s] run 7/100: dynamic setup
+[progress +1m45.214s] run 8/100: dynamic setup
+[progress +1m59.308s] run 9/100: dynamic setup
+[progress +2m13.486s] run 10/100: dynamic setup
+[progress +2m27.633s] run 11/100: dynamic setup
+[progress +2m41.813s] run 12/100: dynamic setup
+[progress +2m56.014s] run 13/100: dynamic setup
+[progress +3m10.155s] run 14/100: dynamic setup
+[progress +3m24.624s] run 15/100: dynamic setup
+[progress +3m39.036s] run 16/100: dynamic setup
+[progress +3m53.22s] run 17/100: dynamic setup
+[progress +4m7.31s] run 18/100: dynamic setup
+[progress +4m21.496s] run 19/100: dynamic setup
+[progress +4m35.914s] run 20/100: dynamic setup
+[progress +4m50.302s] run 21/100: dynamic setup
+[progress +5m4.428s] run 22/100: dynamic setup
+[progress +5m18.561s] run 23/100: dynamic setup
+[progress +5m32.951s] run 24/100: dynamic setup
+[progress +5m47.403s] run 25/100: dynamic setup
+[progress +6m1.629s] run 26/100: dynamic setup
+[progress +6m15.817s] run 27/100: dynamic setup
+[progress +6m30.205s] run 28/100: dynamic setup
+[progress +6m44.668s] run 29/100: dynamic setup
+[progress +6m58.775s] run 30/100: dynamic setup
+[progress +7m12.87s] run 31/100: dynamic setup
+[progress +7m27.276s] run 32/100: dynamic setup
+[progress +7m41.692s] run 33/100: dynamic setup
+[progress +7m55.941s] run 34/100: dynamic setup
+[progress +8m10.188s] run 35/100: dynamic setup
+[progress +8m24.49s] run 36/100: dynamic setup
+[progress +8m38.942s] run 37/100: dynamic setup
+[progress +8m53.136s] run 38/100: dynamic setup
+[progress +9m7.245s] run 39/100: dynamic setup
+[progress +9m21.454s] run 40/100: dynamic setup
+[progress +9m35.919s] run 41/100: dynamic setup
+[progress +9m50.302s] run 42/100: dynamic setup
+[progress +10m4.412s] run 43/100: dynamic setup
+[progress +10m18.574s] run 44/100: dynamic setup
+[progress +10m33s] run 45/100: dynamic setup
+[progress +10m47.44s] run 46/100: dynamic setup
+[progress +11m1.584s] run 47/100: dynamic setup
+[progress +11m15.659s] run 48/100: dynamic setup
+[progress +11m30.115s] run 49/100: dynamic setup
+[progress +11m44.6s] run 50/100: dynamic setup
+[progress +11m58.84s] run 51/100: dynamic setup
+[progress +12m13.059s] run 52/100: dynamic setup
+[progress +12m27.467s] run 53/100: dynamic setup
+[progress +12m41.854s] run 54/100: dynamic setup
+[progress +12m56.086s] run 55/100: dynamic setup
+[progress +13m10.226s] run 56/100: dynamic setup
+[progress +13m24.481s] run 57/100: dynamic setup
+[progress +13m38.888s] run 58/100: dynamic setup
+[progress +13m53.208s] run 59/100: dynamic setup
+[progress +14m7.339s] run 60/100: dynamic setup
+[progress +14m21.585s] run 61/100: dynamic setup
+[progress +14m35.981s] run 62/100: dynamic setup
+[progress +14m50.448s] run 63/100: dynamic setup
+[progress +15m4.489s] run 64/100: dynamic setup
+[progress +15m18.686s] run 65/100: dynamic setup
+[progress +15m33.159s] run 66/100: dynamic setup
+[progress +15m47.641s] run 67/100: dynamic setup
+[progress +16m2.087s] run 68/100: dynamic setup
+[progress +16m16.507s] run 69/100: dynamic setup
+[progress +16m30.933s] run 70/100: dynamic setup
+[progress +16m45.301s] run 71/100: dynamic setup
+[progress +16m59.429s] run 72/100: dynamic setup
+[progress +17m13.57s] run 73/100: dynamic setup
+[progress +17m27.974s] run 74/100: dynamic setup
+[progress +17m42.415s] run 75/100: dynamic setup
+[progress +17m56.695s] run 76/100: dynamic setup
+[progress +18m10.901s] run 77/100: dynamic setup
+[progress +18m25.222s] run 78/100: dynamic setup
+[progress +18m39.598s] run 79/100: dynamic setup
+[progress +18m53.816s] run 80/100: dynamic setup
+[progress +19m7.886s] run 81/100: dynamic setup
+[progress +19m22.037s] run 82/100: dynamic setup
+[progress +19m36.423s] run 83/100: dynamic setup
+[progress +19m50.736s] run 84/100: dynamic setup
+[progress +20m4.975s] run 85/100: dynamic setup
+[progress +20m19.126s] run 86/100: dynamic setup
+[progress +20m33.53s] run 87/100: dynamic setup
+[progress +20m47.926s] run 88/100: dynamic setup
+[progress +21m2.023s] run 89/100: dynamic setup
+[progress +21m16.121s] run 90/100: dynamic setup
+[progress +21m30.525s] run 91/100: dynamic setup
+[progress +21m44.979s] run 92/100: dynamic setup
+[progress +21m59.103s] run 93/100: dynamic setup
+[progress +22m13.211s] run 94/100: dynamic setup
+[progress +22m27.62s] run 95/100: dynamic setup
+[progress +22m41.987s] run 96/100: dynamic setup
+[progress +22m56.201s] run 97/100: dynamic setup
+[progress +23m10.311s] run 98/100: dynamic setup
+[progress +23m24.626s] run 99/100: dynamic setup
+[progress +23m39.129s] run 100/100: dynamic setup
+========== Per-run Summary ==========
+Run 1: func-seed=20260402, lwe-noise-seed=54321, lwe-a-seed=314159, correct=true, noise mean=5.0000, noise std=0.0000, max|.|=5, online=10.5014224s
+Run 2: func-seed=20260403, lwe-noise-seed=54322, lwe-a-seed=314160, correct=true, noise mean=7.0000, noise std=0.0000, max|.|=7, online=10.8001529s
+Run 3: func-seed=20260404, lwe-noise-seed=54323, lwe-a-seed=314161, correct=true, noise mean=17.0000, noise std=0.0000, max|.|=17, online=10.6114038s
+Run 4: func-seed=20260405, lwe-noise-seed=54324, lwe-a-seed=314162, correct=true, noise mean=11.0000, noise std=0.0000, max|.|=11, online=10.3781576s
+Run 5: func-seed=20260406, lwe-noise-seed=54325, lwe-a-seed=314163, correct=true, noise mean=4.0000, noise std=0.0000, max|.|=4, online=10.3906725s
+Run 6: func-seed=20260407, lwe-noise-seed=54326, lwe-a-seed=314164, correct=true, noise mean=12.0000, noise std=0.0000, max|.|=12, online=10.688043s
+Run 7: func-seed=20260408, lwe-noise-seed=54327, lwe-a-seed=314165, correct=true, noise mean=21.0000, noise std=0.0000, max|.|=21, online=10.6900152s
+Run 8: func-seed=20260409, lwe-noise-seed=54328, lwe-a-seed=314166, correct=true, noise mean=8.0000, noise std=0.0000, max|.|=8, online=10.451225s
+Run 9: func-seed=20260410, lwe-noise-seed=54329, lwe-a-seed=314167, correct=true, noise mean=13.0000, noise std=0.0000, max|.|=13, online=10.5516571s
+Run 10: func-seed=20260411, lwe-noise-seed=54330, lwe-a-seed=314168, correct=true, noise mean=-16.0000, noise std=0.0000, max|.|=16, online=10.5062965s
+Run 11: func-seed=20260412, lwe-noise-seed=54331, lwe-a-seed=314169, correct=true, noise mean=1.0000, noise std=0.0000, max|.|=1, online=10.5135814s
+Run 12: func-seed=20260413, lwe-noise-seed=54332, lwe-a-seed=314170, correct=true, noise mean=-12.0000, noise std=0.0000, max|.|=12, online=10.517614s
+Run 13: func-seed=20260414, lwe-noise-seed=54333, lwe-a-seed=314171, correct=true, noise mean=-4.0000, noise std=0.0000, max|.|=4, online=10.4778748s
+Run 14: func-seed=20260415, lwe-noise-seed=54334, lwe-a-seed=314172, correct=true, noise mean=12.0000, noise std=0.0000, max|.|=12, online=10.8188464s
+Run 15: func-seed=20260416, lwe-noise-seed=54335, lwe-a-seed=314173, correct=true, noise mean=-4.0000, noise std=0.0000, max|.|=4, online=10.7656036s
+Run 16: func-seed=20260417, lwe-noise-seed=54336, lwe-a-seed=314174, correct=true, noise mean=7.0000, noise std=0.0000, max|.|=7, online=10.5480438s
+Run 17: func-seed=20260418, lwe-noise-seed=54337, lwe-a-seed=314175, correct=true, noise mean=4.0000, noise std=0.0000, max|.|=4, online=10.4550414s
+Run 18: func-seed=20260419, lwe-noise-seed=54338, lwe-a-seed=314176, correct=true, noise mean=8.0000, noise std=0.0000, max|.|=8, online=10.5592748s
+Run 19: func-seed=20260420, lwe-noise-seed=54339, lwe-a-seed=314177, correct=true, noise mean=12.0000, noise std=0.0000, max|.|=12, online=10.7831427s
+Run 20: func-seed=20260421, lwe-noise-seed=54340, lwe-a-seed=314178, correct=true, noise mean=3.0000, noise std=0.0000, max|.|=3, online=10.7259674s
+Run 21: func-seed=20260422, lwe-noise-seed=54341, lwe-a-seed=314179, correct=true, noise mean=8.0000, noise std=0.0000, max|.|=8, online=10.4771001s
+Run 22: func-seed=20260423, lwe-noise-seed=54342, lwe-a-seed=314180, correct=true, noise mean=-24.0000, noise std=0.0000, max|.|=24, online=10.4959891s
+Run 23: func-seed=20260424, lwe-noise-seed=54343, lwe-a-seed=314181, correct=true, noise mean=-17.0000, noise std=0.0000, max|.|=17, online=10.714595s
+Run 24: func-seed=20260425, lwe-noise-seed=54344, lwe-a-seed=314182, correct=true, noise mean=-7.0000, noise std=0.0000, max|.|=7, online=10.7830945s
+Run 25: func-seed=20260426, lwe-noise-seed=54345, lwe-a-seed=314183, correct=true, noise mean=16.0000, noise std=0.0000, max|.|=16, online=10.5752262s
+Run 26: func-seed=20260427, lwe-noise-seed=54346, lwe-a-seed=314184, correct=true, noise mean=2.0000, noise std=0.0000, max|.|=2, online=10.5278881s
+Run 27: func-seed=20260428, lwe-noise-seed=54347, lwe-a-seed=314185, correct=true, noise mean=0.0000, noise std=0.0000, max|.|=0, online=10.734068s
+Run 28: func-seed=20260429, lwe-noise-seed=54348, lwe-a-seed=314186, correct=true, noise mean=5.0000, noise std=0.0000, max|.|=5, online=10.7957214s
+Run 29: func-seed=20260430, lwe-noise-seed=54349, lwe-a-seed=314187, correct=true, noise mean=-7.0000, noise std=0.0000, max|.|=7, online=10.4469572s
+Run 30: func-seed=20260431, lwe-noise-seed=54350, lwe-a-seed=314188, correct=true, noise mean=-6.0000, noise std=0.0000, max|.|=6, online=10.450216s
+Run 31: func-seed=20260432, lwe-noise-seed=54351, lwe-a-seed=314189, correct=true, noise mean=-9.0000, noise std=0.0000, max|.|=9, online=10.7069156s
+Run 32: func-seed=20260433, lwe-noise-seed=54352, lwe-a-seed=314190, correct=true, noise mean=-4.0000, noise std=0.0000, max|.|=4, online=10.7370121s
+Run 33: func-seed=20260434, lwe-noise-seed=54353, lwe-a-seed=314191, correct=true, noise mean=5.0000, noise std=0.0000, max|.|=5, online=10.6214339s
+Run 34: func-seed=20260435, lwe-noise-seed=54354, lwe-a-seed=314192, correct=true, noise mean=-17.0000, noise std=0.0000, max|.|=17, online=10.608375s
+Run 35: func-seed=20260436, lwe-noise-seed=54355, lwe-a-seed=314193, correct=true, noise mean=2.0000, noise std=0.0000, max|.|=2, online=10.6431348s
+Run 36: func-seed=20260437, lwe-noise-seed=54356, lwe-a-seed=314194, correct=true, noise mean=-1.0000, noise std=0.0000, max|.|=1, online=10.8101627s
+Run 37: func-seed=20260438, lwe-noise-seed=54357, lwe-a-seed=314195, correct=true, noise mean=-21.0000, noise std=0.0000, max|.|=21, online=10.5566786s
+Run 38: func-seed=20260439, lwe-noise-seed=54358, lwe-a-seed=314196, correct=true, noise mean=12.0000, noise std=0.0000, max|.|=12, online=10.4583291s
+Run 39: func-seed=20260440, lwe-noise-seed=54359, lwe-a-seed=314197, correct=true, noise mean=17.0000, noise std=0.0000, max|.|=17, online=10.5787263s
+Run 40: func-seed=20260441, lwe-noise-seed=54360, lwe-a-seed=314198, correct=true, noise mean=-7.0000, noise std=0.0000, max|.|=7, online=10.8110408s
+Run 41: func-seed=20260442, lwe-noise-seed=54361, lwe-a-seed=314199, correct=true, noise mean=22.0000, noise std=0.0000, max|.|=22, online=10.7240723s
+Run 42: func-seed=20260443, lwe-noise-seed=54362, lwe-a-seed=314200, correct=true, noise mean=8.0000, noise std=0.0000, max|.|=8, online=10.4897445s
+Run 43: func-seed=20260444, lwe-noise-seed=54363, lwe-a-seed=314201, correct=true, noise mean=14.0000, noise std=0.0000, max|.|=14, online=10.5058305s
+Run 44: func-seed=20260445, lwe-noise-seed=54364, lwe-a-seed=314202, correct=true, noise mean=-5.0000, noise std=0.0000, max|.|=5, online=10.7741063s
+Run 45: func-seed=20260446, lwe-noise-seed=54365, lwe-a-seed=314203, correct=true, noise mean=7.0000, noise std=0.0000, max|.|=7, online=10.7833183s
+Run 46: func-seed=20260447, lwe-noise-seed=54366, lwe-a-seed=314204, correct=true, noise mean=6.0000, noise std=0.0000, max|.|=6, online=10.4877133s
+Run 47: func-seed=20260448, lwe-noise-seed=54367, lwe-a-seed=314205, correct=true, noise mean=-1.0000, noise std=0.0000, max|.|=1, online=10.3989374s
+Run 48: func-seed=20260449, lwe-noise-seed=54368, lwe-a-seed=314206, correct=true, noise mean=0.0000, noise std=0.0000, max|.|=0, online=10.8095764s
+Run 49: func-seed=20260450, lwe-noise-seed=54369, lwe-a-seed=314207, correct=true, noise mean=13.0000, noise std=0.0000, max|.|=13, online=10.8070052s
+Run 50: func-seed=20260451, lwe-noise-seed=54370, lwe-a-seed=314208, correct=true, noise mean=0.0000, noise std=0.0000, max|.|=0, online=10.5810444s
+Run 51: func-seed=20260452, lwe-noise-seed=54371, lwe-a-seed=314209, correct=true, noise mean=-14.0000, noise std=0.0000, max|.|=14, online=10.5546157s
+Run 52: func-seed=20260453, lwe-noise-seed=54372, lwe-a-seed=314210, correct=true, noise mean=13.0000, noise std=0.0000, max|.|=13, online=10.7810152s
+Run 53: func-seed=20260454, lwe-noise-seed=54373, lwe-a-seed=314211, correct=true, noise mean=2.0000, noise std=0.0000, max|.|=2, online=10.7488416s
+Run 54: func-seed=20260455, lwe-noise-seed=54374, lwe-a-seed=314212, correct=true, noise mean=11.0000, noise std=0.0000, max|.|=11, online=10.5687305s
+Run 55: func-seed=20260456, lwe-noise-seed=54375, lwe-a-seed=314213, correct=true, noise mean=12.0000, noise std=0.0000, max|.|=12, online=10.4904072s
+Run 56: func-seed=20260457, lwe-noise-seed=54376, lwe-a-seed=314214, correct=true, noise mean=-3.0000, noise std=0.0000, max|.|=3, online=10.5991493s
+Run 57: func-seed=20260458, lwe-noise-seed=54377, lwe-a-seed=314215, correct=true, noise mean=-4.0000, noise std=0.0000, max|.|=4, online=10.7751024s
+Run 58: func-seed=20260459, lwe-noise-seed=54378, lwe-a-seed=314216, correct=true, noise mean=2.0000, noise std=0.0000, max|.|=2, online=10.6585532s
+Run 59: func-seed=20260460, lwe-noise-seed=54379, lwe-a-seed=314217, correct=true, noise mean=13.0000, noise std=0.0000, max|.|=13, online=10.513777s
+Run 60: func-seed=20260461, lwe-noise-seed=54380, lwe-a-seed=314218, correct=true, noise mean=-10.0000, noise std=0.0000, max|.|=10, online=10.5987433s
+Run 61: func-seed=20260462, lwe-noise-seed=54381, lwe-a-seed=314219, correct=true, noise mean=21.0000, noise std=0.0000, max|.|=21, online=10.7451684s
+Run 62: func-seed=20260463, lwe-noise-seed=54382, lwe-a-seed=314220, correct=true, noise mean=2.0000, noise std=0.0000, max|.|=2, online=10.7962351s
+Run 63: func-seed=20260464, lwe-noise-seed=54383, lwe-a-seed=314221, correct=true, noise mean=-7.0000, noise std=0.0000, max|.|=7, online=10.4095075s
+Run 64: func-seed=20260465, lwe-noise-seed=54384, lwe-a-seed=314222, correct=true, noise mean=-4.0000, noise std=0.0000, max|.|=4, online=10.5609101s
+Run 65: func-seed=20260466, lwe-noise-seed=54385, lwe-a-seed=314223, correct=true, noise mean=-4.0000, noise std=0.0000, max|.|=4, online=10.8255926s
+Run 66: func-seed=20260467, lwe-noise-seed=54386, lwe-a-seed=314224, correct=true, noise mean=5.0000, noise std=0.0000, max|.|=5, online=10.8042777s
+Run 67: func-seed=20260468, lwe-noise-seed=54387, lwe-a-seed=314225, correct=true, noise mean=16.0000, noise std=0.0000, max|.|=16, online=10.7785049s
+Run 68: func-seed=20260469, lwe-noise-seed=54388, lwe-a-seed=314226, correct=true, noise mean=-5.0000, noise std=0.0000, max|.|=5, online=10.776941s
+Run 69: func-seed=20260470, lwe-noise-seed=54389, lwe-a-seed=314227, correct=true, noise mean=-15.0000, noise std=0.0000, max|.|=15, online=10.7637887s
+Run 70: func-seed=20260471, lwe-noise-seed=54390, lwe-a-seed=314228, correct=true, noise mean=0.0000, noise std=0.0000, max|.|=0, online=10.7082457s
+Run 71: func-seed=20260472, lwe-noise-seed=54391, lwe-a-seed=314229, correct=true, noise mean=20.0000, noise std=0.0000, max|.|=20, online=10.4602173s
+Run 72: func-seed=20260473, lwe-noise-seed=54392, lwe-a-seed=314230, correct=true, noise mean=12.0000, noise std=0.0000, max|.|=12, online=10.4811628s
+Run 73: func-seed=20260474, lwe-noise-seed=54393, lwe-a-seed=314231, correct=true, noise mean=-19.0000, noise std=0.0000, max|.|=19, online=10.7272664s
+Run 74: func-seed=20260475, lwe-noise-seed=54394, lwe-a-seed=314232, correct=true, noise mean=-9.0000, noise std=0.0000, max|.|=9, online=10.800817s
+Run 75: func-seed=20260476, lwe-noise-seed=54395, lwe-a-seed=314233, correct=true, noise mean=-2.0000, noise std=0.0000, max|.|=2, online=10.6156927s
+Run 76: func-seed=20260477, lwe-noise-seed=54396, lwe-a-seed=314234, correct=true, noise mean=4.0000, noise std=0.0000, max|.|=4, online=10.5686112s
+Run 77: func-seed=20260478, lwe-noise-seed=54397, lwe-a-seed=314235, correct=true, noise mean=-11.0000, noise std=0.0000, max|.|=11, online=10.6556509s
+Run 78: func-seed=20260479, lwe-noise-seed=54398, lwe-a-seed=314236, correct=true, noise mean=-20.0000, noise std=0.0000, max|.|=20, online=10.7233537s
+Run 79: func-seed=20260480, lwe-noise-seed=54399, lwe-a-seed=314237, correct=true, noise mean=-4.0000, noise std=0.0000, max|.|=4, online=10.575677s
+Run 80: func-seed=20260481, lwe-noise-seed=54400, lwe-a-seed=314238, correct=true, noise mean=-7.0000, noise std=0.0000, max|.|=7, online=10.4183534s
+Run 81: func-seed=20260482, lwe-noise-seed=54401, lwe-a-seed=314239, correct=true, noise mean=12.0000, noise std=0.0000, max|.|=12, online=10.5041222s
+Run 82: func-seed=20260483, lwe-noise-seed=54402, lwe-a-seed=314240, correct=true, noise mean=-11.0000, noise std=0.0000, max|.|=11, online=10.7675462s
+Run 83: func-seed=20260484, lwe-noise-seed=54403, lwe-a-seed=314241, correct=true, noise mean=8.0000, noise std=0.0000, max|.|=8, online=10.6877963s
+Run 84: func-seed=20260485, lwe-noise-seed=54404, lwe-a-seed=314242, correct=true, noise mean=17.0000, noise std=0.0000, max|.|=17, online=10.5930372s
+Run 85: func-seed=20260486, lwe-noise-seed=54405, lwe-a-seed=314243, correct=true, noise mean=-17.0000, noise std=0.0000, max|.|=17, online=10.5087258s
+Run 86: func-seed=20260487, lwe-noise-seed=54406, lwe-a-seed=314244, correct=true, noise mean=-9.0000, noise std=0.0000, max|.|=9, online=10.793023s
+Run 87: func-seed=20260488, lwe-noise-seed=54407, lwe-a-seed=314245, correct=true, noise mean=2.0000, noise std=0.0000, max|.|=2, online=10.7352127s
+Run 88: func-seed=20260489, lwe-noise-seed=54408, lwe-a-seed=314246, correct=true, noise mean=15.0000, noise std=0.0000, max|.|=15, online=10.4573439s
+Run 89: func-seed=20260490, lwe-noise-seed=54409, lwe-a-seed=314247, correct=true, noise mean=-23.0000, noise std=0.0000, max|.|=23, online=10.4413635s
+Run 90: func-seed=20260491, lwe-noise-seed=54410, lwe-a-seed=314248, correct=true, noise mean=9.0000, noise std=0.0000, max|.|=9, online=10.7730542s
+Run 91: func-seed=20260492, lwe-noise-seed=54411, lwe-a-seed=314249, correct=true, noise mean=28.0000, noise std=0.0000, max|.|=28, online=10.7865826s
+Run 92: func-seed=20260493, lwe-noise-seed=54412, lwe-a-seed=314250, correct=true, noise mean=5.0000, noise std=0.0000, max|.|=5, online=10.488234s
+Run 93: func-seed=20260494, lwe-noise-seed=54413, lwe-a-seed=314251, correct=true, noise mean=-3.0000, noise std=0.0000, max|.|=3, online=10.4875126s
+Run 94: func-seed=20260495, lwe-noise-seed=54414, lwe-a-seed=314252, correct=true, noise mean=-10.0000, noise std=0.0000, max|.|=10, online=10.77164s
+Run 95: func-seed=20260496, lwe-noise-seed=54415, lwe-a-seed=314253, correct=true, noise mean=0.0000, noise std=0.0000, max|.|=0, online=10.708884s
+Run 96: func-seed=20260497, lwe-noise-seed=54416, lwe-a-seed=314254, correct=true, noise mean=-21.0000, noise std=0.0000, max|.|=21, online=10.565039s
+Run 97: func-seed=20260498, lwe-noise-seed=54417, lwe-a-seed=314255, correct=true, noise mean=-1.0000, noise std=0.0000, max|.|=1, online=10.4671373s
+Run 98: func-seed=20260499, lwe-noise-seed=54418, lwe-a-seed=314256, correct=true, noise mean=-5.0000, noise std=0.0000, max|.|=5, online=10.6711093s
+Run 99: func-seed=20260500, lwe-noise-seed=54419, lwe-a-seed=314257, correct=true, noise mean=-3.0000, noise std=0.0000, max|.|=3, online=10.8421015s
+Run 100: func-seed=20260501, lwe-noise-seed=54420, lwe-a-seed=314258, correct=true, noise mean=-2.0000, noise std=0.0000, max|.|=2, online=10.7572849s
+=====================================
+
+========== Aggregated Summary ==========
+runs                       : 100
+all runs correct           : true
+average dynamic setup      : 3.565884129s
+  - fresh LWE ciphertexts  : 821ns
+  - function table         : 272.799µs
+  - LUT build              : 3.565610509s
+  - poly plaintext prep    : 0s
+average online total       : 10.629197091s
+  - pack LWE->BFV          : 3.396174896s
+  - poly eval total        : 7.167289071s
+    · build basis/powers   : 5.222730846s
+    · square x^(r/2)       : 79.828698ms
+    · build grouped powers : 724.379556ms
+    · ParallelLT           : 984.396591ms
+      · LT matrix build    : 17.849527ms
+      · hoisted decompose  : 5.40565ms
+      · baby rotations     : 124.86421ms
+      · giant rotations    : 166.14751ms
+      · pt-ct multiplies   : 375.933091ms
+      · first-stage other  : 137.299906ms
+      · second stage       : 133.615615ms
+      · post-process       : 16.559512ms
+      · post-LT rescale    : 0s
+      · other residual     : 6.72157ms
+    · pointwise multiply   : 20.426125ms
+    · rotate-and-sum       : 99.927305ms
+    · x^d / power gen      : 27.471749ms
+    · outer combine        : 0s
+    · leading term         : 7.422885ms
+    · final add            : 659.8µs
+  - SlotToCoeff            : 0s
+  - BFV-side key switch    : 31.381003ms
+  - correction mul         : 147.77µs
+  - external mod switch    : 34.204351ms
+  - sample extraction      : 0s
+noise mean (all samples)   : 1.0600
+noise std dev (all samples): 11.2168
+max |noise| (all samples)  : 28
+total wall time            : 23m53.5650959s
+========================================
