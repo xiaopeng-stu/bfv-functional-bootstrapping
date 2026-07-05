@@ -1,0 +1,25 @@
+cff-version: 1.2.0
+message: "If you use this research prototype, please cite the accompanying paper."
+title: "BFV Functional Bootstrapping with Sparse Polynomial Evaluation"
+type: software
+authors:
+  - family-names: Zheng
+    given-names: Xiaopeng
+  - family-names: Li
+    given-names: Hongbo
+  - family-names: Wang
+    given-names: Dingkang
+repository-code: "https://github.com/xiaopeng-stu/bfv-functional-bootstrapping"
+date-released: "2026-07-03"
+license: MIT
+references:
+  - type: manuscript
+    title: "Functional Bootstrapping for a Single LWE Ciphertext with O~(1) Polynomial Multiplications"
+    authors:
+      - family-names: Zheng
+        given-names: Xiaopeng
+      - family-names: Li
+        given-names: Hongbo
+      - family-names: Wang
+        given-names: Dingkang
+    year: 2026

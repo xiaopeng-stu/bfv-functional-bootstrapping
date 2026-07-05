@@ -1,8 +1,11 @@
-# BFV Functional Bootstrapping Prototype
+# BFV Functional Bootstrapping with Sparse Polynomial Evaluation
 
-This repository contains a Go/Lattigo research prototype for BFV-based functional bootstrapping of LWE ciphertexts. It supports arbitrary functions over the LWE plaintext space by evaluating a lookup-table polynomial homomorphically.
+This repository contains a Go/Lattigo research prototype for BFV-based functional bootstrapping of LWE ciphertexts. It implements the sparse-packing polynomial-evaluation strategy used in the accompanying paper:
 
-The default target function is a pseudorandom function table generated from a fixed seed. Other options include `-func identity`, `-func square`, `-func cube`, `-func neg`, `-func affine:a,b`, and `-func table`.
+> **Functional Bootstrapping for a Single LWE Ciphertext with O~(1) Polynomial Multiplications**  
+> Xiaopeng Zheng, Hongbo Li, and Dingkang Wang
+
+The code supports arbitrary functions over the LWE plaintext space by interpolating a lookup-table polynomial and evaluating it homomorphically on sparsely packed BFV ciphertexts. The main target regime is single-ciphertext, small-batch, and moderate-batch functional bootstrapping over 9-, 12-, 14-, and 16-bit plaintexts.
 
 This is a research prototype, not production cryptographic software.
 
@@ -10,409 +13,277 @@ This is a research prototype, not production cryptographic software.
 
 ```text
 .
-├── main.go      # implementation
-├── go.mod       # Go module file; pins the Lattigo dependency
-├── README.md    # installation, run commands, and parameter guide
-├── data.txt     # raw benchmark logs used as supporting data
-├── summary.csv  # compact parsed benchmark summary
-└── LICENSE      # MIT license
+├── main.go                         # implementation
+├── go.mod                          # Go module file; pins Lattigo v6.2.0
+├── README.md                       # installation, usage, and benchmark guide
+├── LICENSE                         # MIT license
+├── CITATION.cff                    # citation metadata for GitHub
+├── data.txt                        # cleaned UTF-8 benchmark logs used for the table
+├── summary.csv                     # parsed compact benchmark summary
+├── scripts/
+│   ├── run_quick.sh                # quick Linux/macOS smoke test
+│   ├── run_quick.ps1               # quick Windows PowerShell smoke test
+│   ├── run_paper_benchmarks.sh     # full Linux/macOS benchmark commands
+│   ├── run_paper_benchmarks.ps1    # full Windows PowerShell benchmark commands
+│   ├── run_all_8.ps1               # sequential Windows script with separate logs
+│   ├── clean_powershell_logs.py    # clean mixed-encoding PowerShell logs
+│   └── parse_summary.py            # parser from cleaned logs to summary.csv
+└── docs/
+    ├── algorithm_mapping.md        # mapping between paper algorithms and code
+    ├── functional-bootstrapping-7-3.pdf
+    └── raw/run_20260704_013451.zip # original raw PowerShell logs for data.txt
 ```
 
-GitHub repository path used by this package:
-
-```text
-https://github.com/xiaopeng-stu/bfv-functional-bootstrapping
-```
-
-The Go module path is already set to:
+The Go module path is
 
 ```text
 github.com/xiaopeng-stu/bfv-functional-bootstrapping
 ```
 
-The repository can be kept private first. After checking the README, license, and data files, you may change its visibility on GitHub. The MIT license currently uses `xiaopeng-stu` as the copyright holder; you can replace it with your full name later if desired.
+## What is implemented
 
-## Upload this package to the private GitHub repository
+The online functional bootstrapping path consists of three main stages.
 
-If you have created the private repository `xiaopeng-stu/bfv-functional-bootstrapping` on GitHub, unzip this package and run the following commands from the repository folder.
+1. **LWE to sparse BFV/RLWE packing.** The program generates LWE ciphertexts with phase `alpha*m + e`, homomorphically computes `b - <a,s>`, and packs the phases into BFV slots with repetition multiplicity `r = N/m`.
+2. **Sparse polynomial evaluation.** The program evaluates the LUT polynomial using the sparse Algorithm-5 path: power generation, hoisted BSGS BatchLT, multiplication by grouped powers, rotate-and-sum, and the optional leading term for the `degree = 2^k` split-top case.
+3. **BFV/RLWE back to LWE.** The program applies sparse SlotToCoeff when needed, rescales to the base Q-prime, performs the final Q-prime-only key switch, samples out LWE ciphertexts, and switches from Q-prime to the target LWE modulus `T`.
 
-Linux / Ubuntu:
-
-```bash
-cd bfv-functional-bootstrapping
-git init
-git branch -M main
-git add .
-git commit -m "Initial private release"
-git remote add origin https://github.com/xiaopeng-stu/bfv-functional-bootstrapping.git
-git push -u origin main
-```
-
-Windows PowerShell:
-
-```powershell
-cd .\bfv-functional-bootstrapping
-git init
-git branch -M main
-git add .
-git commit -m "Initial private release"
-git remote add origin https://github.com/xiaopeng-stu/bfv-functional-bootstrapping.git
-git push -u origin main
-```
-
-If GitHub asks for a password when pushing over HTTPS, use a GitHub personal access token instead of your GitHub login password.
+The benchmark configuration in `data.txt` uses a fixed sparse ternary LWE secret with Hamming weight `h = 512`, generates fresh LWE ciphertexts and fresh random functions in each run, and keeps the BFV parameters and evaluation keys fixed across the 100 runs of each setting.
 
 ## Requirements
 
-For a completely fresh computer, you only need to install:
+Install:
 
-1. **Git**, to clone the repository.
-2. **Go**, to compile and run the program.
-3. **Lattigo**, which is installed automatically by Go modules from the dependency recorded in `go.mod`.
+- Git
+- Go 1.25 or newer is recommended
+- Lattigo is downloaded automatically by Go modules
 
-You do **not** need to clone or install Lattigo manually. In this repository, `go.mod` contains
+The dependency is pinned in `go.mod`:
 
 ```text
 require github.com/tuneinsight/lattigo/v6 v6.2.0
 ```
 
-After you run `go mod tidy` or `go mod download`, Go downloads Lattigo and its transitive dependencies into the Go module cache.
-
-Recommended hardware for the largest 14-bit and 16-bit examples:
+Recommended hardware for the full benchmark commands:
 
 ```text
-RAM          : at least 16 GB; more is better on Windows or inside VMware
-CPU          : modern multi-core CPU
-Disk         : several GB free for Go module cache, build cache, and logs
-Operating OS : Linux/Ubuntu or Windows 10/11 PowerShell
+RAM : 32 GB or more for the largest settings
+CPU : modern desktop/server CPU
+Disk: several GB free for Go module cache, build cache, and logs
 ```
 
-## Linux / Ubuntu setup from zero
+For a quick smoke test, much less time is required.
 
-The following commands assume Ubuntu 22.04/24.04 or a similar Debian-based Linux distribution.
+## Install and run
 
-### 1. Install basic tools
-
-```bash
-sudo apt update
-sudo apt install -y git curl ca-certificates build-essential tar
-```
-
-### 2. Install Go
-
-This installs the current official Linux AMD64 Go binary distribution under `/usr/local/go`.
-
-```bash
-GO_VERSION=$(curl -sSL https://go.dev/VERSION?m=text | head -n 1)
-echo "Installing ${GO_VERSION}"
-curl -LO "https://go.dev/dl/${GO_VERSION}.linux-amd64.tar.gz"
-sudo rm -rf /usr/local/go
-sudo tar -C /usr/local -xzf "${GO_VERSION}.linux-amd64.tar.gz"
-echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.bashrc
-source ~/.bashrc
-```
-
-Check that Go and Git are available:
-
-```bash
-go version
-git --version
-```
-
-If `go version` is not found, close the terminal, open a new terminal, and run `go version` again.
-
-### 3. Get this repository
-
-If the repository has already been uploaded to GitHub:
+### Linux / Ubuntu
 
 ```bash
 git clone https://github.com/xiaopeng-stu/bfv-functional-bootstrapping.git
 cd bfv-functional-bootstrapping
-```
-
-If you downloaded the source as a zip file from GitHub, unzip it and enter the folder instead:
-
-```bash
-unzip bfv-functional-bootstrapping-main.zip
-cd bfv-functional-bootstrapping-main
-```
-
-### 4. Install Lattigo through Go modules
-
-From the repository root, run:
-
-```bash
 go mod tidy
-go mod download
+go run . \
+  -N 32768 \
+  -m 1 \
+  -degree 65536 \
+  -T 65537 \
+  -p 512 \
+  -func random \
+  -logq 36,34x18,30 \
+  -logp 34,34,34,34 \
+  -lwe-n 2048 \
+  -lwe-h 512 \
+  -run 1
 ```
 
-Check that Lattigo was downloaded:
+You can also run the included smoke-test script:
 
 ```bash
-go list -m github.com/tuneinsight/lattigo/v6
+bash scripts/run_quick.sh
 ```
 
-You should see a line similar to:
+### Windows PowerShell
 
-```text
-github.com/tuneinsight/lattigo/v6 v6.2.0
+```powershell
+git clone https://github.com/xiaopeng-stu/bfv-functional-bootstrapping.git
+cd bfv-functional-bootstrapping
+go mod tidy
+go run . `
+  -N 32768 `
+  -m 1 `
+  -degree 65536 `
+  -T 65537 `
+  -p 512 `
+  -func random `
+  -logq 36,34x18,30 `
+  -logp 34,34,34,34 `
+  -lwe-n 2048 `
+  -lwe-h 512 `
+  -run 1
 ```
 
-### 5. Run a quick test
+You can also run:
 
-A quick 9-bit single-ciphertext test is:
-
-```bash
-go run . -N 32768 -m 1 -n 2048 -d 65536 -T 65537 -p 512 -func random -logq "52,40,40,40,40,40,40,40,40,40,40,40,40,40,40,40,40,40,40,30" -logp "50,50" -run 1 -final-ks-level-p=-1 -final-ks-pow2-base=1
+```powershell
+.\scripts\run_quick.ps1
 ```
 
-For longer experiments, it is usually better to build the binary once:
+## Building once before long runs
+
+For long experiments, build the executable once.
+
+Linux / Ubuntu:
 
 ```bash
 go build -o fb .
-./fb -N 32768 -m 1 -n 2048 -d 65536 -T 65537 -p 512 -func random -logq "52,40,40,40,40,40,40,40,40,40,40,40,40,40,40,40,40,40,40,30" -logp "50,50" -run 1 -final-ks-level-p=-1 -final-ks-pow2-base=1
+./fb -N 32768 -m 1 -degree 65536 -T 65537 -p 512 -func random -logq 36,34x18,30 -logp 34,34,34,34 -lwe-n 2048 -lwe-h 512 -run 1
 ```
 
-## Windows PowerShell setup from zero
-
-The following commands assume Windows 10/11 with PowerShell.
-
-### 1. Install Git and Go
-
-Open PowerShell. You may use a normal PowerShell window; administrator mode is only needed if your Windows installation requires it.
+Windows PowerShell:
 
 ```powershell
-winget install --id Git.Git -e --source winget
-winget install --id GoLang.Go -e --source winget
+go build -o fb.exe .
+.\fb.exe -N 32768 -m 1 -degree 65536 -T 65537 -p 512 -func random -logq 36,34x18,30 -logp 34,34,34,34 -lwe-n 2048 -lwe-h 512 -run 1
 ```
 
-After installation, close PowerShell and open a new PowerShell window. Then check:
+## Benchmark summary
+
+The raw logs are stored in `data.txt`. The parsed table is stored in `summary.csv`. The current data were regenerated from the uploaded `run_20260704_013451.zip` logs and use `-lwe-h 512`.
+
+| setting | N | d | m | p | logQ layout | logP | online wall (s) | Step 1 | Step 2 | BatchLT | Step 3 | noise σ | fail prob. |
+|---|---:|---:|---:|---:|---|---|---:|---:|---:|---:|---:|---:|---:|
+| 9-bit (m=1) | 32768 | 2^16 | 1 | 2^9 | base 36, poly 34×18, StC 0, pack 30 | 34×4 | 2.061 | 0.693 | 1.284 | 0.098 | 0.081 | 6.4474 | ≤ 2^-68.11 |
+| 9-bit (m=128) | 32768 | 2^16 | 128 | 2^9 | base 36, poly 34×18, StC 34, pack 30 | 34×4 | 3.041 | 0.838 | 1.763 | 0.425 | 0.381 | 6.5792 | ≤ 2^-68.11 |
+| 12-bit (m=1) | 65536 | 2^20-1 | 1 | 2^12 | base 39, poly 38×22, StC 0, pack 38 | 38×5 | 6.158 | 1.835 | 4.141 | 0.296 | 0.172 | 5.8371 | ≤ 2^-154.51 |
+| 12-bit (m=64) | 65536 | 2^20-1 | 64 | 2^12 | base 39, poly 38×22, StC 38, pack 38 | 38×5 | 9.655 | 1.831 | 6.810 | 2.557 | 0.554 | 6.5668 | ≤ 2^-154.51 |
+| 14-bit (m=1) | 65536 | 2^22-1 | 1 | 2^14 | base 42, poly 40×24, StC 0, pack 40 | 40×5 | 7.484 | 2.240 | 5.030 | 0.411 | 0.184 | 6.6909 | ≤ 2^-118.06 |
+| 14-bit (m=32) | 65536 | 2^22-1 | 32 | 2^14 | base 42, poly 40×24, StC 40, pack 40 | 40×5 | 13.360 | 2.309 | 9.711 | 4.431 | 0.421 | 6.5490 | ≤ 2^-118.06 |
+| 16-bit (m=1) | 65536 | 2^23-1 | 1 | 2^16 | base 45, poly 43×25, StC 0, pack 40 | 40×6 | 8.022 | 2.148 | 5.612 | 0.598 | 0.205 | 6.1077 | ≤ 2^-65.97 |
+| 16-bit (m=16) | 65536 | 2^23-1 | 16 | 2^16 | base 45, poly 45×25, StC 45, pack 40 | 40×6 | 13.112 | 2.275 | 9.570 | 3.983 | 0.348 | 6.4563 | ≤ 2^-65.97 |
+
+`Step 2` is the full homomorphic polynomial-evaluation stage. `BatchLT` is listed separately because it is one of the main components of Step 2. The failure probability shown here is the secret-aware sparse bound using `||s||_2^2 + 1 = h + 1 = 513`.
+
+## Reproducing the benchmark data
+
+Run all paper-style benchmarks with:
+
+Linux / Ubuntu:
+
+```bash
+bash scripts/run_paper_benchmarks.sh
+```
+
+Windows PowerShell:
 
 ```powershell
-git --version
-go version
+.\scripts\run_paper_benchmarks.ps1
 ```
 
-If `winget` is not available, install manually:
-
-```text
-Git for Windows : https://git-scm.com/download/win
-Go              : https://go.dev/dl/
-```
-
-Use the default installer options. After installation, open a new PowerShell window and run `git --version` and `go version`.
-
-### 2. Get this repository
-
-If the repository has already been uploaded to GitHub:
+For the sequential PowerShell workflow that creates a timestamped log directory, use:
 
 ```powershell
-git clone https://github.com/xiaopeng-stu/bfv-functional-bootstrapping.git
+powershell -ExecutionPolicy Bypass -File .\scripts\run_all_8.ps1
+```
+
+If the PowerShell logs contain mixed encoding, clean them first and then parse:
+
+```powershell
+python scripts\clean_powershell_logs.py .\logs\run_YYYYMMDD_HHMMSS data-regenerated.txt
+python scripts\parse_summary.py data-regenerated.txt summary-regenerated.csv
+```
+
+To parse an existing clean log file manually:
+
+```bash
+python3 scripts/parse_summary.py data.txt summary.csv
+```
+
+or on Windows:
+
+```powershell
+python scripts\parse_summary.py data.txt summary.csv
+```
+
+## Important command-line options
+
+### Core parameters
+
+- `-N`: BFV ring degree and number of slots.
+- `-m`: number of logical sparse-packed LWE ciphertexts.
+- `-degree`: polynomial degree. The program supports the `degree+1 = 2^k` case and the split-top `degree = 2^k` case.
+- `-T`: BFV plaintext modulus and LWE ciphertext modulus.
+- `-p`: LWE input/output message modulus.
+- `-logq`: comma-separated Q-prime bit-size pattern. Repetition syntax such as `34x18` is supported.
+- `-logp`: comma-separated special-P bit-size pattern.
+- `-lwe-n`: LWE dimension.
+- `-lwe-h`: sparse ternary secret Hamming weight. The current benchmark table uses `512`.
+
+### Function and input generation
+
+- `-func random`: random lookup table generated from `-func-seed`.
+- `-func identity`, `-func square`, `-func cube`, `-func neg`, `-func affine:a,b`: deterministic functions over `Z_p`.
+- `-func-table`: inline table.
+- `-func-file`: table loaded from a file.
+- `-input-seed`, `-func-seed`, `-phase-error-seed`, `-lwe-a-seed`: base seeds. In multi-run mode, run `i` uses base seed plus `i`.
+
+### Online path and diagnostics
+
+- `-run`: number of online runs. Keys and BFV parameters are generated once, while the LWE ciphertexts and function table can vary across runs.
+- `-poly-precompute-pt=true`: precompute polynomial-evaluation plaintext masks.
+- `-scheme-d=true`: use Scheme-D output scaling.
+- `-extract-lwe=true`: run the BFV/RLWE-to-LWE tail after polynomial evaluation.
+- `-qprime-ks-noise=true`: print Q-prime-domain noise before and after the final key switch.
+- `-mul-trace`: print operation-level level/Q-bit/timing diagnostics.
+- `-poly-noise-trace`: decrypt intermediate ciphertexts for detailed polynomial-evaluation noise tracing. This is slow and should only be used for debugging.
+
+## Full benchmark commands
+
+The eight commands used to generate `data.txt` are listed below.
+
+```bash
+# 9-bit (m=1)
+go run . -N 32768 -m 1 -degree 65536 -T 65537 -p 512 -func random -logq 36,34x18,30 -logp 34,34,34,34 -lwe-n 2048 -lwe-h 512 -run 100
+
+# 9-bit (m=128)
+go run . -N 32768 -m 128 -degree 65536 -T 65537 -p 512 -func random -logq 36,34,34x18,30 -logp 34,34,34,34 -lwe-n 2048 -lwe-h 512 -run 100
+
+# 12-bit (m=1)
+go run . -N 65536 -m 1 -degree 1048575 -T 786433 -p 4096 -func random -logq 39,38x22,38 -logp 38,38,38,38,38 -lwe-n 2048 -lwe-h 512 -run 100
+
+# 12-bit (m=64)
+go run . -N 65536 -m 64 -degree 1048575 -T 786433 -p 4096 -func random -logq 39,38,38x22,38 -logp 38,38,38,38,38 -lwe-n 2048 -lwe-h 512 -run 100
+
+# 14-bit (m=1)
+go run . -N 65536 -m 1 -degree 4194303 -T 2752513 -p 16384 -func random -logq 42,40x24,40 -logp 40,40,40,40,40 -lwe-n 2048 -lwe-h 512 -run 100
+
+# 14-bit (m=32)
+go run . -N 65536 -m 32 -degree 4194303 -T 2752513 -p 16384 -func random -logq 42,40,40x24,40 -logp 40,40,40,40,40 -lwe-n 2048 -lwe-h 512 -run 100
+
+# 16-bit (m=1)
+go run . -N 65536 -m 1 -degree 8388607 -T 8257537 -p 65536 -func random -logq 45,43x25,40 -logp 40,40,40,40,40,40 -lwe-n 2048 -lwe-h 512 -run 100
+
+# 16-bit (m=16)
+go run . -N 65536 -m 16 -degree 8388607 -T 8257537 -p 65536 -func random -logq 45,45,45x25,40 -logp 40,40,40,40,40,40 -lwe-n 2048 -lwe-h 512 -run 100
+```
+
+## Uploading this package to GitHub
+
+After unzipping the package:
+
+```bash
 cd bfv-functional-bootstrapping
+git init
+git branch -M main
+git add .
+git commit -m "Initial research prototype release"
+git remote add origin https://github.com/xiaopeng-stu/bfv-functional-bootstrapping.git
+git push -u origin main
 ```
 
-If you downloaded GitHub's `Code -> Download ZIP`, unzip it, then enter the folder. For example:
+If GitHub asks for a password when pushing over HTTPS, use a GitHub personal access token instead of the account password.
 
-```powershell
-cd $env:USERPROFILE\Desktop\bfv-functional-bootstrapping-main
-```
+## Notes
 
-### 3. Install Lattigo through Go modules
-
-From the repository root:
-
-```powershell
-go mod tidy
-go mod download
-go list -m github.com/tuneinsight/lattigo/v6
-```
-
-The last command should print a Lattigo v6 module line such as:
-
-```text
-github.com/tuneinsight/lattigo/v6 v6.2.0
-```
-
-### 4. Run a quick test
-
-The same one-line command works in PowerShell:
-
-```powershell
-go run . -N 32768 -m 1 -n 2048 -d 65536 -T 65537 -p 512 -func random -logq "52,40,40,40,40,40,40,40,40,40,40,40,40,40,40,40,40,40,40,30" -logp "50,50" -run 1 -final-ks-level-p=-1 -final-ks-pow2-base=1
-```
-
-For repeated runs, build first:
-
-```powershell
-go build -o fb.exe .
-.\fb.exe -N 32768 -m 1 -n 2048 -d 65536 -T 65537 -p 512 -func random -logq "52,40,40,40,40,40,40,40,40,40,40,40,40,40,40,40,40,40,40,30" -logp "50,50" -run 1 -final-ks-level-p=-1 -final-ks-pow2-base=1
-```
-
-## Recommended paper-parameter commands
-
-The following commands use `-run 1` for quick testing. To reproduce the benchmark logs in `data.txt`, change `-run 1` to `-run 100`.
-
-### Batched functional bootstrapping
-
-#### 16-bit plaintext space, `m = 16`, `n = 2048`, `d = 8388607`
-
-```bash
-go run . -N 65536 -m 16 -n 2048 -d 8388607 -func random -logq "52,59,59,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,30" -logp "55,55,55,55,55" -T 8257537 -p 65536 -final-ks-level-p=-1 -final-ks-pow2-base=1 -run 1
-```
-
-#### 14-bit plaintext space, `m = 32`, `n = 2048`, `d = 4194303`
-
-```bash
-go run . -N 65536 -m 32 -n 2048 -d 4194303 -func random -logq "52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,30" -logp "55,55,55,55,55,55" -T 2752513 -p 16384 -final-ks-level-p=-1 -final-ks-pow2-base=1 -run 1
-```
-
-#### 12-bit plaintext space, `m = 64`, `n = 2048`, `d = 1048575`
-
-```bash
-go run . -N 65536 -m 64 -n 2048 -d 1048575 -func random -logq "52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,30" -logp "55,55,55,55,55,55" -T 786433 -p 4096 -final-ks-level-p=-1 -final-ks-pow2-base=1 -run 1
-```
-
-#### 9-bit plaintext space, `m = 128`, `n = 2048`, `d = 65536`
-
-```bash
-go run . -N 32768 -m 128 -n 2048 -d 65536 -T 65537 -p 512 -func random -logq "45,37,37,37,37,37,37,37,37,37,37,37,37,37,37,37,37,37,37,37,30" -logp "45,45" -lt-drop-level 3 -lt-post-level 2 -final-ks-level-p=-1 -final-ks-pow2-base=1 -run 1
-```
-
-### Single-ciphertext functional bootstrapping
-
-#### 9-bit plaintext space, `m = 1`, `n = 2048`, `d = 65536`
-
-```bash
-go run . -N 32768 -m 1 -n 2048 -d 65536 -T 65537 -p 512 -func random -logq "52,40,40,40,40,40,40,40,40,40,40,40,40,40,40,40,40,40,40,30" -logp "50,50" -run 1 -final-ks-level-p=-1 -final-ks-pow2-base=1
-```
-
-#### 12-bit plaintext space, `m = 1`, `n = 2048`, `d = 1048575`
-
-```bash
-go run . -N 65536 -m 1 -n 2048 -d 1048575 -func random -logq "52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,30" -logp "55,55,55,55,55,55" -T 786433 -p 4096 -run 1 -final-ks-level-p=-1 -final-ks-pow2-base=1
-```
-
-#### 14-bit plaintext space, `m = 1`, `n = 2048`, `d = 4194303`
-
-```bash
-go run . -N 65536 -m 1 -n 2048 -d 4194303 -func random -logq "52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,30" -logp "55,55,55,55,55,55" -T 2752513 -p 16384 -run 1 -final-ks-level-p=-1 -final-ks-pow2-base=1
-```
-
-#### 16-bit plaintext space, `m = 1`, `n = 2048`, `d = 8388607`
-
-```bash
-go run . -N 65536 -m 1 -n 2048 -d 8388607 -func random -logq "53,59,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,30" -logp "55,55,55,55,55" -T 8257537 -p 65536 -run 1 -final-ks-level-p=-1 -final-ks-pow2-base=1
-```
-
-## What the parameters mean
-
-| Flag | Meaning |
-|---|---|
-| `-N` | BFV ring degree. The BFV polynomial ring is usually `Z_Q[X]/(X^N+1)`. Larger `N` gives more slots and a larger security dimension, but also increases cost. |
-| `-m` | Number of LWE ciphertexts packed and bootstrapped together. `m=1` is the single-ciphertext case. |
-| `-n` | LWE dimension. The paper-parameter commands above use `n=2048`. |
-| `-d` | Degree of the lookup-table polynomial for the target function. For large plaintext spaces, `d+1` is usually a power of two. |
-| `-func` | Target function over `Z_p`. Useful choices include `random`, `identity`, `square`, `cube`, `neg`, `affine:a,b`, and `table`. |
-| `-T` | BFV plaintext modulus. |
-| `-p` | LWE plaintext/message modulus. The plaintext space has approximately `log2(p)` bits. |
-| `-logq` | Bit sizes of the BFV `Q` modulus chain. The first entry is the lowest-level modulus prime. |
-| `-logp` | Bit sizes of auxiliary `P` primes used by hybrid key switching. |
-| `-lt-drop-level` | Optional level drop before the sparse linear transform. Used in the 9-bit batched parameter set. |
-| `-lt-post-level` | Optional target level after the sparse linear transform. Used in the 9-bit batched parameter set. |
-| `-final-ks-level-p=-1` | Use a Q-only final BFV key-switch key, with no `P` limbs. This avoids using a large `P` modulus for the final embedded LWE secret. |
-| `-final-ks-pow2-base` | Base-2 decomposition width for the Q-only final key switch. `1` is conservative but slower and produces a larger final key. Larger values reduce key size and time but may increase noise. |
-| `-run` | Number of independent benchmark repetitions. Use `1` for quick testing and `100` for paper-style data. |
-| `-gc-every` | Optional manual garbage-collection interval. Default `0` leaves GC to Go. For memory-constrained machines, try `-gc-every=10` or `20`. |
-| `-mem-progress` | Print Go heap and RSS diagnostics during long runs. |
-
-## Benchmark data included
-
-- `data.txt` contains the raw run logs used as supporting data.
-- `summary.csv` contains a compact parsed summary, including average online time, noise statistics, and key sizes.
-
-Summary of the included 100-run data:
-
-| Case | m | p bits | d | Avg. online time | Max abs. noise | Correct |
-|---|---:|---:|---:|---:|---:|:---:|
-| batched 16-bit | 16 | 16 | 8388607 | 18.072756834s | 47 | true |
-| batched 14-bit | 32 | 14 | 4194303 | 16.876113773s | 38 | true |
-| batched 12-bit | 64 | 12 | 1048575 | 13.940105025s | 42 | true |
-| batched 9-bit | 128 | 9 | 65536 | 3.773339770s | 41 | true |
-| single 9-bit | 1 | 9 | 65536 | 3.149412944s | 32 | true |
-| single 12-bit | 1 | 12 | 1048575 | 8.359151837s | 26 | true |
-| single 14-bit | 1 | 14 | 4194303 | 9.345778149s | 29 | true |
-| single 16-bit | 1 | 16 | 8388607 | 10.629197091s | 28 | true |
-
-## Troubleshooting
-
-### `go: command not found`
-
-Go is not in your `PATH`. On Linux, run:
-
-```bash
-source ~/.bashrc
-go version
-```
-
-If it still fails, add Go manually:
-
-```bash
-export PATH=$PATH:/usr/local/go/bin
-```
-
-On Windows, close PowerShell and open a new PowerShell window after installing Go.
-
-### `git: command not found`
-
-Install Git first. On Ubuntu:
-
-```bash
-sudo apt install -y git
-```
-
-On Windows:
-
-```powershell
-winget install --id Git.Git -e --source winget
-```
-
-### Lattigo download is slow or fails
-
-Check the module proxy setting:
-
-```bash
-go env GOPROXY
-```
-
-The default usually works:
-
-```bash
-go env -w GOPROXY=https://proxy.golang.org,direct
-```
-
-Then rerun:
-
-```bash
-go mod tidy
-```
-
-### Windows or VMware becomes very slow
-
-The largest parameter sets generate several GiB of rotation and evaluation keys. If a run suddenly becomes slow, check whether the system is swapping. On Windows or inside VMware, it is often better to build once and run the binary:
-
-```powershell
-go build -o fb.exe .
-.\fb.exe <parameters>
-```
-
-Useful diagnostics:
-
-```bash
-go run . <parameters> -mem-progress=true
-```
-
-For long repeated runs on memory-constrained machines:
-
-```bash
-go run . <parameters> -run 100 -gc-every=10
-```
+- The comparison data in the paper is intended to show the single-ciphertext, small-batch, and moderate-batch regime. It is not a cycle-accurate apples-to-apples comparison with other libraries or machines.
+- The single-ciphertext rows skip sparse SlotToCoeff by default because the output is already a constant replicated plaintext.
+- The code uses Lattigo's BGV package as the unified integer-arithmetic backend for BFV-style plaintext arithmetic in Lattigo v6.

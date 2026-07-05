@@ -1,0 +1,23 @@
+# Go build outputs
+/fb
+/fb.exe
+*.test
+*.out
+*.prof
+*.pprof
+
+# Benchmark and diagnostic logs generated locally
+/logs/
+results/
+*.log
+*.tmp
+
+# OS / editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Go workspace files should normally stay local
+go.work
+go.work.sum

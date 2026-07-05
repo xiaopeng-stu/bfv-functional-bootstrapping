@@ -21,37 +21,22 @@ import (
 	bfv "github.com/tuneinsight/lattigo/v6/schemes/bgv"
 )
 
-// This program implements a homomorphic linear transformation for sparsely packed
-// BFV ciphertexts using the n x n matrix U computed from the basis polynomials
+// Research prototype for BFV-based functional bootstrapping of LWE ciphertexts.
 //
-//   1,
-//   X^{step} - X^{N-step},
-//   X^{2*step} - X^{N-2*step},
-//   ...,
-//   X^{(n-1)*step} - X^{N-(n-1)*step},
+// The implementation follows the sparse-packing polynomial-evaluation strategy
+// used in the accompanying paper "Functional Bootstrapping for a Single LWE
+// Ciphertext with O~(1) Polynomial Multiplications". At a high level, the
+// online path is:
 //
-// where step = (N/2)/n.
+//   1. homomorphically decrypt and sparsely pack LWE phases into a BFV/RLWE
+//      ciphertext;
+//   2. evaluate the LUT polynomial with the sparse Algorithm-5 path using
+//      EvalPower, hoisted BSGS BatchLT, grouped powers, and RotateAndSum;
+//   3. optionally convert the BFV/RLWE output back to LWE by sparse StC,
+//      base-modulus key switching, sample extraction, and Qprime-to-T switching.
 //
-// The matrix U is formed exactly as in the user's previous program:
-// for each basis polynomial, decode its plaintext polynomial to BFV slots and keep
-// the first n slots as one row of U.
-//
-// Given an input sparse-packed ciphertext encrypting
-//
-//   1_r ⊗ (x_0, ..., x_{n-1}),   r = N / n,
-//
-// the program applies the homomorphic linear map
-//
-//   v -> v * U,
-//
-// using cyclic diagonal decomposition and a baby-step giant-step (BSGS) strategy.
-// Each diagonal is itself sparsely packed across N slots.
-//
-// After decryption, the program interprets the output slot vector as a BFV plaintext
-// via EncodeRingT and checks whether the sparse polynomial coefficients at
-// positions 0, step, 2*step, ..., (n-1)*step match the original input slots.
-//
-// Lattigo v6 implements BFV through the unified schemes/bgv package.
+// The program is intended for reproducible research experiments. It is not
+// production cryptographic software.
 
 type CoeffTerm struct {
 	Index int
@@ -75,6 +60,18 @@ type BSGSStats struct {
 	Additions        int
 	G                int
 	B                int
+}
+
+type LWEToRLWEStats struct {
+	Blocks       int
+	InnerPeriod  int
+	CMults       int
+	Rotations    int
+	RowRotations int
+	Additions    int
+	Encryptions  int
+	BSKBytes     int64
+	Mode         string
 }
 
 type TimingInfo struct {
@@ -119,6 +116,7 @@ func (pl *ProgressLogger) Logf(format string, args ...interface{}) {
 
 var globalProgress *ProgressLogger
 var globalProgressBlocks bool
+var globalDeferPointwiseRescale bool
 
 func progressf(format string, args ...interface{}) {
 	if globalProgress != nil {
@@ -262,8 +260,15 @@ func autoDepthForWrappedPolyEval(r, d int) (int, error) {
 		return 0, fmt.Errorf("Algorithm 5 requires r < d <= r^2 and r|d, got d=%d, r=%d", d, r)
 	}
 	s := d / r
+	// Algorithm 5 should consume log(d)+2 levels in the wrapped power-of-two
+	// setting used here. With r and s=d/r, this is
+	//   log(r) + (log(s)+1) + 1 = log(d)+2.
+	// The default fast LT policy evaluates BatchLT directly at the grouped-powers
+	// level, matching the original implementation. The optional extra-level LT
+	// policy can still evaluate at ct2.Level()+1 and rescale back, but the output
+	// level entering the line-5 product is planned by the same depth formula.
 	consumed := log2Pow2(r) + monomialConsumedDepth(s) + 1
-	return consumed + 1, nil
+	return consumed, nil
 }
 
 func parseBitList(spec string) ([]int, error) {
@@ -442,6 +447,185 @@ func sampleTruncatedDiscreteGaussian(n int, sigma float64, bound int64, seed int
 	return out
 }
 
+func addSignedMod(x uint64, e int64, mod uint64) uint64 {
+	x %= mod
+	if e >= 0 {
+		return (x + uint64(e)%mod) % mod
+	}
+	mag := uint64(-e) % mod
+	if x >= mag {
+		return x - mag
+	}
+	return x + mod - mag
+}
+
+func isLWEToRLWEInputMode(inputMode string) bool {
+	mode := strings.ToLower(strings.TrimSpace(inputMode))
+	switch mode {
+	case "lwe", "lwe-phase", "lwe-pack", "lwe-to-rlwe", "lwe-rlwe", "step1", "lwe-step1", "lwe-homdec":
+		return true
+	default:
+		return false
+	}
+}
+
+type LWEToRLWEPackingPlan struct {
+	Blocks      int
+	InnerPeriod int
+	Desc        string
+}
+
+func planLWEToRLWEStep1(N, m, n int) (LWEToRLWEPackingPlan, error) {
+	if m <= 0 || N%m != 0 {
+		return LWEToRLWEPackingPlan{}, fmt.Errorf("invalid sparse packing: N=%d, m=%d", N, m)
+	}
+	if n <= 0 {
+		return LWEToRLWEPackingPlan{}, fmt.Errorf("LWE dimension must be positive, got n=%d", n)
+	}
+	if !isPow2(n) {
+		return LWEToRLWEPackingPlan{}, fmt.Errorf("the Step-1 row-sum implementation assumes -lwe-n is a power of two, got %d", n)
+	}
+	r := N / m
+	if !isPow2(r) {
+		return LWEToRLWEPackingPlan{}, fmt.Errorf("r=N/m must be a power of two, got r=%d", r)
+	}
+	if r >= n {
+		if r%n != 0 {
+			return LWEToRLWEPackingPlan{}, fmt.Errorf("paper Step 1 in the r>=n branch requires n|r, got r=%d n=%d", r, n)
+		}
+		return LWEToRLWEPackingPlan{
+			Blocks:      1,
+			InnerPeriod: n,
+			Desc:        fmt.Sprintf("r=%d >= n=%d: one encrypted repeated secret block, row-sum period n", r, n),
+		}, nil
+	}
+	if n%r != 0 {
+		return LWEToRLWEPackingPlan{}, fmt.Errorf("paper Step 1 in the n>r branch requires r|n, got n=%d r=%d", n, r)
+	}
+	return LWEToRLWEPackingPlan{
+		Blocks:      n / r,
+		InnerPeriod: r,
+		Desc:        fmt.Sprintf("n=%d > r=%d: split LWE secret into %d encrypted blocks, row-sum period r", n, r, n/r),
+	}, nil
+}
+
+func buildRLWEPhaseInputs(inputMode string, rawInput []int64, messageSpec, errorSpec string, m int, t, p uint64, inputSeed, errorSeed int64, errorSigma float64, errorBoundFlag int64) (x []uint64, messages []uint64, errors []int64, desc string, err error) {
+	if m <= 0 {
+		return nil, nil, nil, "", fmt.Errorf("m must be positive")
+	}
+	mode := strings.ToLower(strings.TrimSpace(inputMode))
+	if mode == "" {
+		mode = "phase"
+	}
+
+	parseMessages := func() ([]uint64, error) {
+		parsed, err := parseVector(messageSpec)
+		if err != nil {
+			return nil, fmt.Errorf("invalid -message: %w", err)
+		}
+		if len(parsed) == 0 {
+			return makeRandomMessages(m, p, inputSeed), nil
+		}
+		if len(parsed) != m {
+			return nil, fmt.Errorf("len(message)=%d != m=%d", len(parsed), m)
+		}
+		out := make([]uint64, m)
+		for i, v := range parsed {
+			out[i] = toUintMod(v, p)
+		}
+		return out, nil
+	}
+
+	parseErrors := func(defaultBound int64) ([]int64, int64, error) {
+		bound := errorBoundFlag
+		if bound < 0 {
+			bound = defaultBound
+		}
+		if bound <= 0 {
+			return nil, 0, fmt.Errorf("input phase error bound must be positive, got %d", bound)
+		}
+		parsed, err := parseVector(errorSpec)
+		if err != nil {
+			return nil, 0, fmt.Errorf("invalid -phase-error: %w", err)
+		}
+		if len(parsed) != 0 {
+			if len(parsed) != m {
+				return nil, 0, fmt.Errorf("len(phase-error)=%d != m=%d", len(parsed), m)
+			}
+			out := make([]int64, m)
+			for i, v := range parsed {
+				if abs64(v) >= bound {
+					return nil, 0, fmt.Errorf("phase-error[%d]=%d violates |e| < %d", i, v, bound)
+				}
+				out[i] = v
+			}
+			return out, bound, nil
+		}
+		return sampleTruncatedDiscreteGaussian(m, errorSigma, bound, errorSeed), bound, nil
+	}
+
+	switch mode {
+	case "raw", "direct", "plain", "plaintext":
+		if len(rawInput) == 0 {
+			x = makeRandomMessages(m, t, inputSeed)
+		} else {
+			if len(rawInput) != m {
+				return nil, nil, nil, "", fmt.Errorf("len(x)=%d != m=%d", len(rawInput), m)
+			}
+			x = make([]uint64, m)
+			for i, v := range rawInput {
+				x[i] = toUintMod(v, t)
+			}
+		}
+		return x, nil, nil, fmt.Sprintf("raw/direct: encrypt supplied values x in Z_%d", t), nil
+
+	case "phase-raw", "raw-phase":
+		if len(rawInput) == 0 {
+			return nil, nil, nil, "", fmt.Errorf("-input-mode=%s requires explicit -x phase values", mode)
+		}
+		if len(rawInput) != m {
+			return nil, nil, nil, "", fmt.Errorf("len(x)=%d != m=%d", len(rawInput), m)
+		}
+		x = make([]uint64, m)
+		for i, v := range rawInput {
+			x[i] = toUintMod(v, t)
+		}
+		return x, nil, nil, fmt.Sprintf("phase-raw: encrypt explicit phase values x in Z_%d", t), nil
+
+	case "phase", "delta", "delta-phase", "lwe-phase", "bfv-phase":
+		if p == 0 || t < p {
+			return nil, nil, nil, "", fmt.Errorf("phase input requires 0 < p <= T, got p=%d T=%d", p, t)
+		}
+		delta := t / p
+		if delta == 0 {
+			return nil, nil, nil, "", fmt.Errorf("Delta=floor(T/p)=0 for T=%d p=%d", t, p)
+		}
+		if len(rawInput) != 0 {
+			return nil, nil, nil, "", fmt.Errorf("-input-mode=phase uses -message and -phase-error; use -input-mode=phase-raw if -x already contains phase values")
+		}
+		msgs, err := parseMessages()
+		if err != nil {
+			return nil, nil, nil, "", err
+		}
+		defaultBound := int64(delta / 2)
+		if defaultBound <= 0 {
+			defaultBound = 1
+		}
+		errs, bound, err := parseErrors(defaultBound)
+		if err != nil {
+			return nil, nil, nil, "", err
+		}
+		x = make([]uint64, m)
+		for i := 0; i < m; i++ {
+			x[i] = toUintMod(int64(delta)*int64(msgs[i])+errs[i], t)
+		}
+		desc = fmt.Sprintf("phase: encrypt x=Delta*m+e in Z_%d, p=%d, Delta=floor(T/p)=%d, |e|<%d", t, p, delta, bound)
+		return x, msgs, errs, desc, nil
+	default:
+		return nil, nil, nil, "", fmt.Errorf("unknown -input-mode=%q; expected phase, phase-raw, or raw", inputMode)
+	}
+}
+
 func generateRandomLWECiphertexts(msgMod []uint64, secret []int64, alpha, t uint64, noises []int64, aSeed int64) ([]LWECiphertext, []uint64, error) {
 	if len(msgMod) != len(noises) {
 		return nil, nil, fmt.Errorf("len(msgMod)=%d != len(noises)=%d", len(msgMod), len(noises))
@@ -469,6 +653,247 @@ func generateRandomLWECiphertexts(msgMod []uint64, secret []int64, alpha, t uint
 		xMod[i] = phase
 	}
 	return out, xMod, nil
+}
+
+func buildStep1SecretAndMaskSlots(lweCts []LWECiphertext, secretMod []uint64, block int, plan LWEToRLWEPackingPlan, m, r int, mod uint64) (skSlots, maskSlots []uint64, err error) {
+	if len(lweCts) != m {
+		return nil, nil, fmt.Errorf("len(lweCts)=%d != m=%d", len(lweCts), m)
+	}
+	if len(secretMod) == 0 {
+		return nil, nil, errors.New("empty LWE secret")
+	}
+	N := m * r
+	skSlots = make([]uint64, N)
+	maskSlots = make([]uint64, N)
+	n := len(secretMod)
+	for col := 0; col < r; col++ {
+		var coord int
+		if plan.Blocks == 1 && r >= n {
+			coord = col % n
+		} else {
+			coord = block*r + col
+		}
+		if coord < 0 || coord >= n {
+			return nil, nil, fmt.Errorf("internal Step1 coordinate out of range: coord=%d, n=%d", coord, n)
+		}
+		sVal := secretMod[coord] % mod
+		for row := 0; row < m; row++ {
+			if coord >= len(lweCts[row].A) {
+				return nil, nil, fmt.Errorf("LWE ciphertext %d has dimension %d, but Step1 requested coordinate %d", row, len(lweCts[row].A), coord)
+			}
+			pos := col*m + row
+			skSlots[pos] = sVal
+			maskSlots[pos] = negateMod(lweCts[row].A[coord]%mod, mod)
+		}
+	}
+	return skSlots, maskSlots, nil
+}
+
+func expectedForAddPlainSlots(ct *rlwe.Ciphertext, plain []uint64) []uint64 {
+	av, ok := polyExpected(ct)
+	if !ok || plain == nil || globalMulTracer == nil {
+		return nil
+	}
+	if len(av) != len(plain) {
+		return nil
+	}
+	out := make([]uint64, len(av))
+	mod := globalMulTracer.Mod
+	for i := range av {
+		out[i] = (av[i] + plain[i]) % mod
+	}
+	return out
+}
+
+func mulPlainNoRescaleNamed(eval *bfv.Evaluator, ct *rlwe.Ciphertext, op rlwe.Operand, expectedPlain []uint64, traceName string) (*rlwe.Ciphertext, error) {
+	st := time.Now()
+	out, err := eval.MulNew(ct, op)
+	dur := time.Since(st)
+	if err != nil {
+		return nil, err
+	}
+	logMulTrace(mulTraceName("mulPlainNoRescale", traceName), "ct-pt-Step1", ct, nil, out, false, dur, expectedForCtPlainMul(ct, expectedPlain))
+	return out, nil
+}
+
+func addCiphertextsStep1(eval *bfv.Evaluator, a, b *rlwe.Ciphertext, name string) (*rlwe.Ciphertext, error) {
+	st := time.Now()
+	out, err := eval.AddNew(a, b)
+	dur := time.Since(st)
+	if err != nil {
+		return nil, err
+	}
+	logOpTrace(name, "add", a, b, out, false, dur, expectedForAdd(a, b))
+	return out, nil
+}
+
+func sparseRotateAndSumStep1(params bfv.Parameters, eval *bfv.Evaluator, ct *rlwe.Ciphertext, baseLen, s int, stats *LWEToRLWEStats) (*rlwe.Ciphertext, error) {
+	if s <= 1 {
+		return ct, nil
+	}
+	if !isPow2(s) {
+		return nil, fmt.Errorf("Step1 row-sum period s=%d must be a power of two", s)
+	}
+	r := params.MaxSlots() / baseLen
+	if s > r {
+		return nil, fmt.Errorf("Step1 row-sum period s=%d exceeds repetition factor r=%d", s, r)
+	}
+	ell := log2Pow2(s)
+	h := ct.CopyNew()
+	polyCopyExpected(ct, h)
+	for i := 0; i < ell-1; i++ {
+		shift := baseLen * (1 << i)
+		stRot := time.Now()
+		rot, err := eval.RotateColumnsNew(h, shift)
+		durRot := time.Since(stRot)
+		if err != nil {
+			return nil, fmt.Errorf("Step1 RotateColumns(%d) failed: %w", shift, err)
+		}
+		if stats != nil {
+			stats.Rotations++
+		}
+		logOpTrace(fmt.Sprintf("LWE->RLWE Step1 row-sum: ColumnRotation step=%d shift=%d", i, shift), "rot-col", h, nil, rot, false, durRot, expectedForRotateColumns(h, shift))
+		stAdd := time.Now()
+		sum, err := eval.AddNew(h, rot)
+		durAdd := time.Since(stAdd)
+		if err != nil {
+			return nil, fmt.Errorf("Step1 Add after RotateColumns(%d) failed: %w", shift, err)
+		}
+		if stats != nil {
+			stats.Additions++
+		}
+		logOpTrace(fmt.Sprintf("LWE->RLWE Step1 row-sum: Add rotated value step=%d shift=%d", i, shift), "add", h, rot, sum, false, durAdd, expectedForAdd(h, rot))
+		h = sum
+	}
+	if s == r {
+		stRot := time.Now()
+		rot, err := eval.RotateRowsNew(h)
+		durRot := time.Since(stRot)
+		if err != nil {
+			return nil, fmt.Errorf("Step1 RotateRows failed: %w", err)
+		}
+		if stats != nil {
+			stats.RowRotations++
+		}
+		logOpTrace("LWE->RLWE Step1 row-sum: RowRotation final half-sum", "rot-row", h, nil, rot, false, durRot, expectedForRowSwap(h))
+		stAdd := time.Now()
+		sum, err := eval.AddNew(h, rot)
+		durAdd := time.Since(stAdd)
+		if err != nil {
+			return nil, fmt.Errorf("Step1 Add after RotateRows failed: %w", err)
+		}
+		if stats != nil {
+			stats.Additions++
+		}
+		logOpTrace("LWE->RLWE Step1 row-sum: Add RowRotation final half-sum", "add", h, rot, sum, false, durAdd, expectedForAdd(h, rot))
+		h = sum
+	} else {
+		shift := baseLen * (1 << (ell - 1))
+		stRot := time.Now()
+		rot, err := eval.RotateColumnsNew(h, shift)
+		durRot := time.Since(stRot)
+		if err != nil {
+			return nil, fmt.Errorf("Step1 final RotateColumns(%d) failed: %w", shift, err)
+		}
+		if stats != nil {
+			stats.Rotations++
+		}
+		logOpTrace(fmt.Sprintf("LWE->RLWE Step1 row-sum: final ColumnRotation shift=%d", shift), "rot-col", h, nil, rot, false, durRot, expectedForRotateColumns(h, shift))
+		stAdd := time.Now()
+		sum, err := eval.AddNew(h, rot)
+		durAdd := time.Since(stAdd)
+		if err != nil {
+			return nil, fmt.Errorf("Step1 final Add after RotateColumns(%d) failed: %w", shift, err)
+		}
+		if stats != nil {
+			stats.Additions++
+		}
+		logOpTrace(fmt.Sprintf("LWE->RLWE Step1 row-sum: final Add after ColumnRotation shift=%d", shift), "add", h, rot, sum, false, durAdd, expectedForAdd(h, rot))
+		h = sum
+	}
+	return h, nil
+}
+
+func homomorphicDecryptLWEToSparseRLWE(params bfv.Parameters, encoder *bfv.Encoder, enc *rlwe.Encryptor, eval *bfv.Evaluator, lweCts []LWECiphertext, secretMod []uint64, plan LWEToRLWEPackingPlan, m int) (*rlwe.Ciphertext, LWEToRLWEStats, error) {
+	stats := LWEToRLWEStats{Blocks: plan.Blocks, InnerPeriod: plan.InnerPeriod, Mode: plan.Desc}
+	if len(lweCts) != m {
+		return nil, stats, fmt.Errorf("len(lweCts)=%d != m=%d", len(lweCts), m)
+	}
+	if len(secretMod) == 0 {
+		return nil, stats, errors.New("empty LWE secret")
+	}
+	N := params.MaxSlots()
+	if N%m != 0 {
+		return nil, stats, fmt.Errorf("m=%d must divide MaxSlots=%d", m, N)
+	}
+	r := N / m
+	if plan.Blocks <= 0 || plan.InnerPeriod <= 0 {
+		return nil, stats, fmt.Errorf("invalid LWE->RLWE Step1 plan: %+v", plan)
+	}
+	var acc *rlwe.Ciphertext
+	for block := 0; block < plan.Blocks; block++ {
+		skSlots, maskSlots, err := buildStep1SecretAndMaskSlots(lweCts, secretMod, block, plan, m, r, params.PlaintextModulus())
+		if err != nil {
+			return nil, stats, err
+		}
+		ptSk, err := encodeBatchedPlaintextAtMaxLevel(params, encoder, skSlots)
+		if err != nil {
+			return nil, stats, fmt.Errorf("encode LWE->RLWE encrypted secret block %d: %w", block, err)
+		}
+		ctSk, err := enc.EncryptNew(ptSk)
+		if err != nil {
+			return nil, stats, fmt.Errorf("encrypt LWE->RLWE secret block %d: %w", block, err)
+		}
+		stats.Encryptions++
+		stats.BSKBytes += int64(ctSk.BinarySize())
+		polyRegisterExpected(ctSk, skSlots)
+		ptMask, err := encodeBatchedPlaintextAtLevel(params, encoder, maskSlots, ctSk.Level(), ctSk.MetaData)
+		if err != nil {
+			return nil, stats, fmt.Errorf("encode LWE->RLWE -a mask block %d: %w", block, err)
+		}
+		term, err := mulPlainNoRescaleNamed(eval, ctSk, ptMask, maskSlots, fmt.Sprintf("LWE->RLWE Step1: encrypted secret block %d times plaintext -a mask", block))
+		if err != nil {
+			return nil, stats, fmt.Errorf("LWE->RLWE CMult for secret block %d failed: %w", block, err)
+		}
+		stats.CMults++
+		if acc == nil {
+			acc = term
+		} else {
+			var err error
+			acc, err = addCiphertextsStep1(eval, acc, term, fmt.Sprintf("LWE->RLWE Step1: add secret-block contribution %d", block))
+			if err != nil {
+				return nil, stats, err
+			}
+			stats.Additions++
+		}
+	}
+	if acc == nil {
+		return nil, stats, errors.New("LWE->RLWE accumulator is empty")
+	}
+	ctInner, err := sparseRotateAndSumStep1(params, eval, acc, m, plan.InnerPeriod, &stats)
+	if err != nil {
+		return nil, stats, err
+	}
+	bSlots := make([]uint64, N)
+	for col := 0; col < r; col++ {
+		for row := 0; row < m; row++ {
+			bSlots[col*m+row] = lweCts[row].B % params.PlaintextModulus()
+		}
+	}
+	ptB, err := encodeBatchedPlaintextAtLevel(params, encoder, bSlots, ctInner.Level(), ctInner.MetaData)
+	if err != nil {
+		return nil, stats, fmt.Errorf("encode LWE->RLWE replicated b vector: %w", err)
+	}
+	stAdd := time.Now()
+	ctOut, err := eval.AddNew(ctInner, ptB)
+	durAdd := time.Since(stAdd)
+	if err != nil {
+		return nil, stats, fmt.Errorf("LWE->RLWE add replicated b failed: %w", err)
+	}
+	stats.Additions++
+	ctOut.IsBatched = true
+	logOpTrace("LWE->RLWE Step1: add replicated b vector", "add", ctInner, nil, ctOut, false, durAdd, expectedForAddPlainSlots(ctInner, bSlots))
+	return ctOut, stats, nil
 }
 
 func buildSecretBlockSlots(secret []int64, blockStart, rho, m int, mod uint64) []uint64 {
@@ -540,7 +965,7 @@ func homomorphicPackLWECiphertexts(params bfv.Parameters, eval *bfv.Evaluator, s
 	var accRows *rlwe.Ciphertext
 	for ell, ctS := range secretBlocks {
 		mask := buildMaskBlockSlots(lweCts, ell*rho, rho, m, params.PlaintextModulus())
-		term, err := mulPlainRescale(eval, ctS, mask)
+		term, err := mulPlainRescaleNamed(eval, ctS, mask, fmt.Sprintf("PackLWE: secret block %d times plaintext LWE mask", ell))
 		if err != nil {
 			return nil, fmt.Errorf("packing plaintext-ciphertext multiplication for secret block %d failed: %w", ell, err)
 		}
@@ -904,6 +1329,101 @@ func buildLUTPolynomialCoefficientsGeneral(t, p uint64, funcTable []uint64) ([]u
 	return coeff, nil
 }
 
+func strictDecodePhaseToMessageModP(phase, alpha, p, t, bound uint64) (uint64, bool) {
+	if alpha == 0 || p == 0 || t == 0 || bound == 0 {
+		return 0, false
+	}
+	phase %= t
+	mu := decodePhaseToMessageModP(phase, alpha, p, t)
+	center := mulMod(alpha%t, mu%p, t)
+	d := centeredDiff(phase, center, t)
+	if d < 0 {
+		d = -d
+	}
+	return mu, uint64(d) < bound
+}
+
+// buildStrictFunctionalLUTPolynomialCoefficients implements the Section-5 LUT
+// construction over the whole field Z_t. For each valid noisy phase
+//
+//	y = Delta*m + e,  |e| < floor(t/(2p)),
+//
+// it assigns
+//
+//	LUT(inputScale*y) = outputScale*Delta*f(m)  (mod t),
+//
+// and assigns 0 outside the union of the valid intervals. The returned
+// coefficients represent the unique polynomial of degree at most t-1 over Z_t.
+func buildStrictFunctionalLUTPolynomialCoefficients(t, p uint64, funcTable []uint64, inputScale, outputScale uint64) ([]uint64, error) {
+	if len(funcTable) != int(p) {
+		return nil, fmt.Errorf("function table length must be p=%d, got %d", p, len(funcTable))
+	}
+	if p == 0 || t < p {
+		return nil, fmt.Errorf("need 0 < p <= t, got p=%d t=%d", p, t)
+	}
+	alpha := t / p
+	if alpha == 0 {
+		return nil, fmt.Errorf("Delta=floor(t/p)=0 for t=%d, p=%d", t, p)
+	}
+	bound := t / (2 * p)
+	if bound == 0 {
+		return nil, fmt.Errorf("empty valid phase interval: floor(t/(2p))=0 for t=%d p=%d", t, p)
+	}
+	inputScale %= t
+	outputScale %= t
+	if inputScale == 0 || tailGCDUint64(inputScale, t) != 1 {
+		return nil, fmt.Errorf("input scale %d is not a unit modulo t=%d", inputScale, t)
+	}
+	invInputScale, err := tailInvModUint64(inputScale, t)
+	if err != nil {
+		return nil, err
+	}
+	order := int(t - 1)
+	root, err := findPrimitiveRootPrime(t)
+	if err != nil {
+		return nil, err
+	}
+	lutValueAtScaledInput := func(z uint64) uint64 {
+		y := mulMod(z%t, invInputScale, t)
+		mu, ok := strictDecodePhaseToMessageModP(y, alpha, p, t, bound)
+		if !ok {
+			return 0
+		}
+		return mulMod(outputScale, mulMod(alpha%t, funcTable[mu%p]%p, t), t)
+	}
+	seq := make([]uint64, order)
+	x := uint64(1)
+	for j := 0; j < order; j++ {
+		seq[j] = lutValueAtScaledInput(x)
+		x = mulMod(x, root, t)
+	}
+	dft, err := nttForwardMixedPow2Odd(seq, root, t)
+	if err != nil {
+		return nil, err
+	}
+	coeff := make([]uint64, order+1)
+	y0 := lutValueAtScaledInput(0)
+	coeff[0] = y0
+	for i := 1; i < order; i++ {
+		coeff[i] = negateMod(dft[order-i], t)
+	}
+	coeff[order] = negateMod((y0+dft[0])%t, t)
+	return coeff, nil
+}
+
+func padPolynomialCoefficientsToDegree(coeff []uint64, degree int) []uint64 {
+	need := degree + 1
+	if need <= 0 {
+		return coeff
+	}
+	if len(coeff) >= need {
+		return coeff[:need]
+	}
+	out := make([]uint64, need)
+	copy(out, coeff)
+	return out
+}
+
 func makeDefaultVector(n int) []int64 {
 	out := make([]int64, n)
 	for i := range out {
@@ -1223,35 +1743,74 @@ func uniqueRotationShiftsForBSGS(n int) []int {
 }
 
 type PreprocessedBSGSPlaintexts struct {
-	G         int
-	B         int
-	ShiftedPT []*rlwe.Plaintext
+	G          int
+	B          int
+	ShiftedPT  []*rlwe.Plaintext
+	ShiftedVec [][]uint64 // optional cleartext masks used only by -mul-trace-noise
 }
 
-func encodeBatchedPlaintextAtMaxLevel(params bfv.Parameters, encoder *bfv.Encoder, values []uint64) (*rlwe.Plaintext, error) {
-	pt := bfv.NewPlaintext(params, params.MaxLevel())
+func encodeBatchedPlaintextAtLevel(params bfv.Parameters, encoder *bfv.Encoder, values []uint64, level int, md *rlwe.MetaData) (*rlwe.Plaintext, error) {
+	if level < 0 || level > params.MaxLevel() {
+		return nil, fmt.Errorf("invalid plaintext level %d for MaxLevel=%d", level, params.MaxLevel())
+	}
+	pt := bfv.NewPlaintext(params, level)
+	if md != nil {
+		pt.MetaData = md.CopyNew()
+	}
+	pt.IsBatched = true
 	if err := encoder.Encode(values, pt); err != nil {
 		return nil, err
 	}
 	return pt, nil
 }
 
+func encodeBatchedPlaintextAtMaxLevel(params bfv.Parameters, encoder *bfv.Encoder, values []uint64) (*rlwe.Plaintext, error) {
+	return encodeBatchedPlaintextAtLevel(params, encoder, values, params.MaxLevel(), nil)
+}
+
+func cloneTraceSlotsIfNeeded(values []uint64) []uint64 {
+	if !mulTraceNoiseActive() || values == nil {
+		return nil
+	}
+	return append([]uint64(nil), values...)
+}
+
 func mulOperandNoRescale(eval *bfv.Evaluator, ct *rlwe.Ciphertext, op rlwe.Operand) (*rlwe.Ciphertext, error) {
+	return mulOperandNoRescaleNamed(eval, ct, op, "")
+}
+
+func mulOperandNoRescaleNamed(eval *bfv.Evaluator, ct *rlwe.Ciphertext, op rlwe.Operand, traceName string) (*rlwe.Ciphertext, error) {
+	return mulOperandNoRescaleNamedWithPlain(eval, ct, op, nil, traceName)
+}
+
+func mulOperandNoRescaleNamedWithPlain(eval *bfv.Evaluator, ct *rlwe.Ciphertext, op rlwe.Operand, plain []uint64, traceName string) (*rlwe.Ciphertext, error) {
+	st := time.Now()
 	out, err := eval.MulNew(ct, op)
 	if err != nil {
 		return nil, err
 	}
+	logMulTrace(mulTraceName("mulOperandNoRescale", traceName), "ct-op", ct, nil, out, false, time.Since(st), expectedForCtPlainMul(ct, plain))
 	return out, nil
 }
 
 func mulOperandRescale(eval *bfv.Evaluator, ct *rlwe.Ciphertext, op rlwe.Operand) (*rlwe.Ciphertext, error) {
-	out, err := mulOperandNoRescale(eval, ct, op)
+	return mulOperandRescaleNamed(eval, ct, op, "")
+}
+
+func mulOperandRescaleNamed(eval *bfv.Evaluator, ct *rlwe.Ciphertext, op rlwe.Operand, traceName string) (*rlwe.Ciphertext, error) {
+	return mulOperandRescaleNamedWithPlain(eval, ct, op, nil, traceName)
+}
+
+func mulOperandRescaleNamedWithPlain(eval *bfv.Evaluator, ct *rlwe.Ciphertext, op rlwe.Operand, plain []uint64, traceName string) (*rlwe.Ciphertext, error) {
+	st := time.Now()
+	out, err := eval.MulNew(ct, op)
 	if err != nil {
 		return nil, err
 	}
 	if err = eval.Rescale(out, out); err != nil {
 		return nil, err
 	}
+	logMulTrace(mulTraceName("mulOperandRescale", traceName), "ct-op", ct, nil, out, true, time.Since(st), expectedForCtPlainMul(ct, plain))
 	return out, nil
 }
 
@@ -1269,6 +1828,10 @@ func preprocessSlotToCoeffBSGSPlaintexts(params bfv.Parameters, encoder *bfv.Enc
 	g := int(math.Ceil(math.Sqrt(float64(n))))
 	b := (n + g - 1) / g
 	shiftedPT := make([]*rlwe.Plaintext, n)
+	var shiftedVec [][]uint64
+	if mulTraceNoiseActive() {
+		shiftedVec = make([][]uint64, n)
+	}
 	for j := 0; j < n; j++ {
 		giantShift := (j / g) * g
 		shifted := rotateLeftUint64(diagExt[j], -giantShift)
@@ -1277,8 +1840,11 @@ func preprocessSlotToCoeffBSGSPlaintexts(params bfv.Parameters, encoder *bfv.Enc
 			return nil, fmt.Errorf("failed to pre-encode SlotToCoeff diagonal %d: %w", j, err)
 		}
 		shiftedPT[j] = pt
+		if shiftedVec != nil {
+			shiftedVec[j] = append([]uint64(nil), shifted...)
+		}
 	}
-	return &PreprocessedBSGSPlaintexts{G: g, B: b, ShiftedPT: shiftedPT}, nil
+	return &PreprocessedBSGSPlaintexts{G: g, B: b, ShiftedPT: shiftedPT, ShiftedVec: shiftedVec}, nil
 }
 
 func HomomorphicSparseLinearTransformBSGSPrecomp(
@@ -1302,6 +1868,7 @@ func HomomorphicSparseLinearTransformBSGSPrecomp(
 		if err != nil {
 			return nil, stats, fmt.Errorf("baby rotation by %d failed: %w", k, err)
 		}
+		polyRegisterExpectedRotateColumns(rot, ct, k)
 		baby[k] = rot
 		stats.Rotations++
 		stats.BabyRotations++
@@ -1316,7 +1883,11 @@ func HomomorphicSparseLinearTransformBSGSPrecomp(
 			if j >= n {
 				break
 			}
-			term, err := mulOperandRescale(eval, baby[k], pre.ShiftedPT[j])
+			var shiftedPlain []uint64
+			if j < len(pre.ShiftedVec) {
+				shiftedPlain = pre.ShiftedVec[j]
+			}
+			term, err := mulOperandRescaleNamedWithPlain(eval, baby[k], pre.ShiftedPT[j], shiftedPlain, fmt.Sprintf("SlotToCoeff BSGS(precomp): term j=%d from giant i=%d, baby k=%d", j, i, k))
 			if err != nil {
 				return nil, stats, fmt.Errorf("plaintext-ciphertext multiplication for diagonal %d failed: %w", j, err)
 			}
@@ -1324,10 +1895,12 @@ func HomomorphicSparseLinearTransformBSGSPrecomp(
 			if block == nil {
 				block = term
 			} else {
+				oldBlockExpected := polyExpectedClone(block)
 				block, err = eval.AddNew(block, term)
 				if err != nil {
 					return nil, stats, fmt.Errorf("block add for diagonal %d failed: %w", j, err)
 				}
+				polyRegisterExpectedAddSaved(block, oldBlockExpected, term)
 				stats.Additions++
 			}
 		}
@@ -1339,6 +1912,7 @@ func HomomorphicSparseLinearTransformBSGSPrecomp(
 			if err != nil {
 				return nil, stats, fmt.Errorf("giant rotation by %d failed: %w", giantShift, err)
 			}
+			polyRegisterExpectedRotateColumns(rot, block, giantShift)
 			block = rot
 			stats.Rotations++
 			stats.GiantRotations++
@@ -1346,11 +1920,13 @@ func HomomorphicSparseLinearTransformBSGSPrecomp(
 		if acc == nil {
 			acc = block
 		} else {
+			oldAccExpected := polyExpectedClone(acc)
 			var err error
 			acc, err = eval.AddNew(acc, block)
 			if err != nil {
 				return nil, stats, fmt.Errorf("accumulator add for giant block %d failed: %w", i, err)
 			}
+			polyRegisterExpectedAddSaved(acc, oldAccExpected, block)
 			stats.Additions++
 		}
 	}
@@ -1365,14 +1941,19 @@ type PreprocessedMonomial struct {
 	Ell           int
 	ConstVec      []uint64
 	FirstMaskPT   *rlwe.Plaintext
+	FirstMaskVec  []uint64 // optional cleartext mask used only by -mul-trace-noise
 	FirstConstVec []uint64
 	CMaskPT       []*rlwe.Plaintext
+	CMaskVec      [][]uint64 // optional cleartext masks used only by -mul-trace-noise
 	DConstVec     [][]uint64
 }
 
-func preprocessMonomialPlaintexts(params bfv.Parameters, encoder *bfv.Encoder, n int, coeffs [][]uint64) (*PreprocessedMonomial, error) {
+func preprocessMonomialPlaintextsAtInputLevel(params bfv.Parameters, encoder *bfv.Encoder, n int, coeffs [][]uint64, inputLevel int) (*PreprocessedMonomial, error) {
 	if len(coeffs) == 0 || len(coeffs[0]) == 0 {
 		return nil, errors.New("coeffs is empty")
+	}
+	if inputLevel < 0 || inputLevel > params.MaxLevel() {
+		return nil, fmt.Errorf("invalid monomial precompute input level L%d for MaxLevel=%d", inputLevel, params.MaxLevel())
 	}
 	s := len(coeffs[0])
 	r, ell, err := validateMonomialInputs(params, n, s, coeffs)
@@ -1389,21 +1970,36 @@ func preprocessMonomialPlaintexts(params bfv.Parameters, encoder *bfv.Encoder, n
 	fVec := buildCoeffExtVector(coeffs, n, r, s, slots, T)
 	cExt, dExt := buildBitMasks(n, r, s, slots)
 	firstMask := hadamard(cExt[0], fVec, T)
-	pre.FirstMaskPT, err = encodeBatchedPlaintextAtMaxLevel(params, encoder, firstMask)
+	pre.FirstMaskPT, err = encodeBatchedPlaintextAtLevel(params, encoder, firstMask, inputLevel, nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to pre-encode first monomial mask: %w", err)
+		return nil, fmt.Errorf("failed to pre-encode first monomial mask at L%d: %w", inputLevel, err)
 	}
+	pre.FirstMaskVec = cloneTraceSlotsIfNeeded(firstMask)
 	pre.FirstConstVec = hadamard(dExt[0], fVec, T)
 	pre.CMaskPT = make([]*rlwe.Plaintext, ell)
+	if mulTraceNoiseActive() {
+		pre.CMaskVec = make([][]uint64, ell)
+	}
 	pre.DConstVec = make([][]uint64, ell)
 	for i := 1; i < ell; i++ {
-		pre.CMaskPT[i], err = encodeBatchedPlaintextAtMaxLevel(params, encoder, cExt[i])
+		maskLevel := inputLevel - i
+		if maskLevel < 0 {
+			return nil, fmt.Errorf("monomial precompute would need C_%d at negative level L%d; input level L%d is too small", i, maskLevel, inputLevel)
+		}
+		pre.CMaskPT[i], err = encodeBatchedPlaintextAtLevel(params, encoder, cExt[i], maskLevel, nil)
 		if err != nil {
-			return nil, fmt.Errorf("failed to pre-encode monomial mask bit %d: %w", i, err)
+			return nil, fmt.Errorf("failed to pre-encode monomial mask bit %d at L%d: %w", i, maskLevel, err)
+		}
+		if pre.CMaskVec != nil {
+			pre.CMaskVec[i] = append([]uint64(nil), cExt[i]...)
 		}
 		pre.DConstVec[i] = append([]uint64(nil), dExt[i]...)
 	}
 	return pre, nil
+}
+
+func preprocessMonomialPlaintexts(params bfv.Parameters, encoder *bfv.Encoder, n int, coeffs [][]uint64) (*PreprocessedMonomial, error) {
+	return preprocessMonomialPlaintextsAtInputLevel(params, encoder, n, coeffs, params.MaxLevel())
 }
 
 func MonomialGenExtraPrecomp(
@@ -1433,6 +2029,7 @@ func MonomialGenExtraPrecomp(
 		if err != nil {
 			return nil, nil, timing, fmt.Errorf("failed to add constant vector: %w", err)
 		}
+		polyRegisterExpected(out, pre.ConstVec)
 		timing.Total = time.Since(totalStart)
 		progressf("run complete in %v", timing.Total)
 		return out, nil, timing, nil
@@ -1440,8 +2037,9 @@ func MonomialGenExtraPrecomp(
 	powStart := time.Now()
 	xPow := make([]*rlwe.Ciphertext, pre.Ell)
 	xPow[0] = ct.CopyNew()
+	polyCopyExpected(ct, xPow[0])
 	for i := 1; i < pre.Ell; i++ {
-		xPow[i], err = mulCtRelinRescale(eval, xPow[i-1], xPow[i-1])
+		xPow[i], err = mulCtRelinRescaleNamed(eval, xPow[i-1], xPow[i-1], fmt.Sprintf("MonomialGen(s=%d): power chain xPow[%d] = xPow[%d]^2", s, i, i-1))
 		if err != nil {
 			return nil, nil, timing, fmt.Errorf("failed to compute x^(2^%d): %w", i, err)
 		}
@@ -1450,9 +2048,10 @@ func MonomialGenExtraPrecomp(
 	var extra *rlwe.Ciphertext
 	if wantExtra {
 		extra = xPow[pre.Ell-1].CopyNew()
+		polyCopyExpected(xPow[pre.Ell-1], extra)
 	}
 	yStart := time.Now()
-	tmp, err := mulOperandRescale(eval, xPow[0], pre.FirstMaskPT)
+	tmp, err := mulOperandRescaleNamedWithPlain(eval, xPow[0], pre.FirstMaskPT, pre.FirstMaskVec, fmt.Sprintf("MonomialGen(s=%d): first masked factor tmp = xPow[0] * C_0", s))
 	if err != nil {
 		return nil, nil, timing, fmt.Errorf("failed first masked multiply: %w", err)
 	}
@@ -1460,8 +2059,13 @@ func MonomialGenExtraPrecomp(
 	if err != nil {
 		return nil, nil, timing, fmt.Errorf("failed first masked add: %w", err)
 	}
+	polyRegisterExpectedAddPlain(acc, tmp, pre.FirstConstVec)
 	for i := 1; i < pre.Ell; i++ {
-		tmp, err = mulOperandRescale(eval, xPow[i], pre.CMaskPT[i])
+		var cMaskPlain []uint64
+		if i < len(pre.CMaskVec) {
+			cMaskPlain = pre.CMaskVec[i]
+		}
+		tmp, err = mulOperandRescaleNamedWithPlain(eval, xPow[i], pre.CMaskPT[i], cMaskPlain, fmt.Sprintf("MonomialGen(s=%d): bit %d masked factor tmp = xPow[%d] * C_%d", s, i, i, i))
 		if err != nil {
 			return nil, nil, timing, fmt.Errorf("failed masked multiply at bit %d: %w", i, err)
 		}
@@ -1469,7 +2073,8 @@ func MonomialGenExtraPrecomp(
 		if err != nil {
 			return nil, nil, timing, fmt.Errorf("failed masked add at bit %d: %w", i, err)
 		}
-		acc, err = mulCtRelinRescale(eval, acc, factor)
+		polyRegisterExpectedAddPlain(factor, tmp, pre.DConstVec[i])
+		acc, err = mulCtRelinRescaleNamed(eval, acc, factor, fmt.Sprintf("MonomialGen(s=%d): bit %d combine acc = acc * factor", s, i))
 		if err != nil {
 			return nil, nil, timing, fmt.Errorf("failed ciphertext multiply at bit %d: %w", i, err)
 		}
@@ -1480,30 +2085,45 @@ func MonomialGenExtraPrecomp(
 }
 
 type PreprocessedParallelLT2 struct {
-	Ell           int
-	R             int
-	G             int
-	B             int
-	ShiftedMaskPT []*rlwe.Plaintext
+	Ell            int
+	R              int
+	G              int
+	B              int
+	ShiftedMaskPT  []*rlwe.Plaintext
+	ShiftedMaskVec [][]uint64 // optional cleartext masks used only by -mul-trace-noise
 }
 
-func preprocessParallelLT2(params bfv.Parameters, encoder *bfv.Encoder, A, B [][][]uint64, n, ell, r int) (*PreprocessedParallelLT2, error) {
+func preprocessParallelLT2AtLevel(params bfv.Parameters, encoder *bfv.Encoder, A, B [][][]uint64, n, ell, r int, level int) (*PreprocessedParallelLT2, error) {
+	if level < 0 || level > params.MaxLevel() {
+		return nil, fmt.Errorf("invalid ParallelLT plaintext level L%d for MaxLevel=%d", level, params.MaxLevel())
+	}
 	g, b, err := choosePolyLTBSGS(ell)
 	if err != nil {
 		return nil, err
 	}
 	pre := &PreprocessedParallelLT2{Ell: ell, R: r, G: g, B: b, ShiftedMaskPT: make([]*rlwe.Plaintext, ell)}
+	if mulTraceNoiseActive() {
+		pre.ShiftedMaskVec = make([][]uint64, ell)
+	}
+	var shiftedMaskBuf []uint64
 	for j := 0; j < ell; j++ {
 		giantShift := (j / g) * g * n
-		mask := buildMaskVector(A, B, j, n, ell, r)
-		shiftedMask := rotateWithinHalves(mask, -giantShift)
-		pt, err := encodeBatchedPlaintextAtMaxLevel(params, encoder, shiftedMask)
+		shiftedMask := buildShiftedMaskVectorInPlace(shiftedMaskBuf, A, B, j, n, ell, r, giantShift)
+		shiftedMaskBuf = shiftedMask
+		pt, err := encodeBatchedPlaintextAtLevel(params, encoder, shiftedMask, level, nil)
 		if err != nil {
-			return nil, fmt.Errorf("failed to pre-encode ParallelLT mask %d: %w", j, err)
+			return nil, fmt.Errorf("failed to pre-encode ParallelLT mask %d at L%d: %w", j, level, err)
 		}
 		pre.ShiftedMaskPT[j] = pt
+		if pre.ShiftedMaskVec != nil {
+			pre.ShiftedMaskVec[j] = append([]uint64(nil), shiftedMask...)
+		}
 	}
 	return pre, nil
+}
+
+func preprocessParallelLT2(params bfv.Parameters, encoder *bfv.Encoder, A, B [][][]uint64, n, ell, r int) (*PreprocessedParallelLT2, error) {
+	return preprocessParallelLT2AtLevel(params, encoder, A, B, n, ell, r, params.MaxLevel())
 }
 
 func parallelLT2FirstStageBSGSHoistedPrecomp(
@@ -1531,6 +2151,7 @@ func parallelLT2FirstStageBSGSHoistedPrecomp(
 			return nil, fmt.Errorf("alg2 bsgs baby rotation k=%d failed: %w", k, err)
 		}
 		tm.BabyRotations += time.Since(stRot)
+		polyRegisterExpectedRotateColumns(rot, ctIn, k*n)
 		baby[k] = rot
 	}
 	var acc *rlwe.Ciphertext
@@ -1542,18 +2163,34 @@ func parallelLT2FirstStageBSGSHoistedPrecomp(
 			if j >= ell {
 				break
 			}
+			if pre.ShiftedMaskPT[j] == nil {
+				return nil, fmt.Errorf("alg2 bsgs precomputed plaintext j=%d is nil", j)
+			}
+			if plaintextLevel(pre.ShiftedMaskPT[j]) != levelQ {
+				return nil, fmt.Errorf("alg2 bsgs precomputed plaintext j=%d is at L%d but BatchLT ciphertext is at L%d; regenerate -poly-precompute-pt with the resolved LT level", j, plaintextLevel(pre.ShiftedMaskPT[j]), levelQ)
+			}
 			stMul := time.Now()
 			term, err := eval.MulNew(baby[k], pre.ShiftedMaskPT[j])
 			if err != nil {
 				return nil, fmt.Errorf("alg2 bsgs term multiply i=%d k=%d j=%d failed: %w", i, k, j, err)
 			}
-			tm.PlaintextCipherMul += time.Since(stMul)
+			durMul := time.Since(stMul)
+			tm.PlaintextCipherMul += durMul
+			if mulTraceActive() {
+				var shiftedPlain []uint64
+				if j < len(pre.ShiftedMaskVec) {
+					shiftedPlain = pre.ShiftedMaskVec[j]
+				}
+				logMulTrace(fmt.Sprintf("ParallelLT/BSGS(precomp): term = baby[%d] * shiftedMask[j=%d], giant block i=%d", k, j, i), "ct-pt-LT", baby[k], nil, term, false, durMul, expectedForCtPlainMul(baby[k], shiftedPlain))
+			}
 			if block == nil {
 				block = term
 			} else {
+				oldBlockExpected := polyExpectedClone(block)
 				if err := eval.Add(block, term, block); err != nil {
 					return nil, fmt.Errorf("alg2 bsgs block add i=%d k=%d j=%d failed: %w", i, k, j, err)
 				}
+				polyRegisterExpectedAddSaved(block, oldBlockExpected, term)
 			}
 		}
 		if block == nil {
@@ -1562,8 +2199,12 @@ func parallelLT2FirstStageBSGSHoistedPrecomp(
 		if giantShift == 0 {
 			if acc == nil {
 				acc = block
-			} else if err := eval.Add(acc, block, acc); err != nil {
-				return nil, fmt.Errorf("alg2 bsgs acc add i=%d failed: %w", i, err)
+			} else {
+				oldAccExpected := polyExpectedClone(acc)
+				if err := eval.Add(acc, block, acc); err != nil {
+					return nil, fmt.Errorf("alg2 bsgs acc add i=%d failed: %w", i, err)
+				}
+				polyRegisterExpectedAddSaved(acc, oldAccExpected, block)
 			}
 		} else {
 			rot := bfv.NewCiphertext(params, 1, block.Level())
@@ -1573,10 +2214,15 @@ func parallelLT2FirstStageBSGSHoistedPrecomp(
 				return nil, fmt.Errorf("alg2 bsgs giant rotation i=%d failed: %w", i, err)
 			}
 			tm.GiantRotations += time.Since(stRot)
+			polyRegisterExpectedRotateColumns(rot, block, giantShift)
 			if acc == nil {
 				acc = rot
-			} else if err := eval.Add(acc, rot, acc); err != nil {
-				return nil, fmt.Errorf("alg2 bsgs giant add i=%d failed: %w", i, err)
+			} else {
+				oldAccExpected := polyExpectedClone(acc)
+				if err := eval.Add(acc, rot, acc); err != nil {
+					return nil, fmt.Errorf("alg2 bsgs giant add i=%d failed: %w", i, err)
+				}
+				polyRegisterExpectedAddSaved(acc, oldAccExpected, rot)
 			}
 		}
 	}
@@ -1659,6 +2305,32 @@ func preprocessParallelLT3Views(params bfv.Parameters, encoder *bfv.Encoder, U [
 	return pre, nil
 }
 
+func preprocessParallelLT3ViewsAtLevel(params bfv.Parameters, encoder *bfv.Encoder, U [][][]uint64, n, ell, r int, level int) (*PreprocessedParallelLT3, error) {
+	pre := &PreprocessedParallelLT3{}
+	if ell < r {
+		A, B := splitUHorizontalViews(U, ell, r)
+		p1, err := preprocessParallelLT2AtLevel(params, encoder, A, B, n, ell, r, level)
+		if err != nil {
+			return nil, err
+		}
+		pre.Short = true
+		pre.Pre1 = p1
+		return pre, nil
+	}
+	A, B, C, D := splitUBlocksViews(U, r)
+	p1, err := preprocessParallelLT2AtLevel(params, encoder, A, D, n, r/2, r, level)
+	if err != nil {
+		return nil, err
+	}
+	p2, err := preprocessParallelLT2AtLevel(params, encoder, B, C, n, r/2, r, level)
+	if err != nil {
+		return nil, err
+	}
+	pre.Pre1 = p1
+	pre.Pre2 = p2
+	return pre, nil
+}
+
 func parallelLT3BSGSHoistedPrecomp(params bfv.Parameters, eval *bfv.Evaluator, ctIn *rlwe.Ciphertext, pre *PreprocessedParallelLT3, n, ell, r int) (*rlwe.Ciphertext, AlgoTimings, error) {
 	var tm AlgoTimings
 	start := time.Now()
@@ -1669,6 +2341,7 @@ func parallelLT3BSGSHoistedPrecomp(params bfv.Parameters, eval *bfv.Evaluator, c
 		}
 		tm.AddStage(t2)
 		startPost := time.Now()
+		oldYExpected := polyExpectedClone(y)
 		tauY, err := rowSwapCipher(params, eval, y)
 		if err != nil {
 			return nil, tm, fmt.Errorf("alg3 row swap failed: %w", err)
@@ -1676,6 +2349,7 @@ func parallelLT3BSGSHoistedPrecomp(params bfv.Parameters, eval *bfv.Evaluator, c
 		if err := eval.Add(y, tauY, y); err != nil {
 			return nil, tm, fmt.Errorf("alg3 add y+tau(y) failed: %w", err)
 		}
+		polyRegisterExpectedAddSaved(y, oldYExpected, tauY)
 		tm.PostProcess += time.Since(startPost)
 		tm.Total = time.Since(start)
 		return y, tm, nil
@@ -1697,57 +2371,210 @@ func parallelLT3BSGSHoistedPrecomp(params bfv.Parameters, eval *bfv.Evaluator, c
 	}
 	tm.AddStage(t2b)
 	startPost = time.Now()
+	oldYExpected := polyExpectedClone(y)
 	if err := eval.Add(y, yPrime, y); err != nil {
 		return nil, tm, fmt.Errorf("alg3 add y+y' failed: %w", err)
 	}
+	polyRegisterExpectedAddSaved(y, oldYExpected, yPrime)
 	tm.PostProcess += time.Since(startPost)
 	tm.Total = time.Since(start)
 	return y, tm, nil
 }
 
 type PreprocessedPolyEval struct {
-	D        int
-	M        int
-	LeadPT   *rlwe.Plaintext
-	LowerMon *PreprocessedMonomial
-	OnesRMon *PreprocessedMonomial
-	OnesSMon *PreprocessedMonomial
-	LT       *PreprocessedParallelLT3
+	D           int
+	M           int
+	Mode        string
+	InputLevel  int
+	CT1Level    int
+	CT2Level    int
+	LTLevel     int
+	LTPostLevel int
+	LeadLevel   int
+	LeadPT      *rlwe.Plaintext
+	LeadVec     []uint64 // optional cleartext leading vector used only by -mul-trace-noise
+	LowerMon    *PreprocessedMonomial
+	OnesRMon    *PreprocessedMonomial
+	OnesSMon    *PreprocessedMonomial
+	LT          *PreprocessedParallelLT3
+}
+
+func monomialOutputLevelForPrecompute(inputLevel, s int) (int, error) {
+	if inputLevel < 0 {
+		return 0, fmt.Errorf("negative monomial input level L%d", inputLevel)
+	}
+	if s <= 0 || !isPow2(s) {
+		return 0, fmt.Errorf("s=%d must be a positive power of two", s)
+	}
+	ell := log2Pow2(s)
+	if ell == 0 {
+		return inputLevel, nil
+	}
+	if ell == 1 {
+		if inputLevel-1 < 0 {
+			return 0, fmt.Errorf("monomial s=%d at L%d would end below L0", s, inputLevel)
+		}
+		return inputLevel - 1, nil
+	}
+	out := inputLevel - ell - 1
+	if out < 0 {
+		return 0, fmt.Errorf("monomial s=%d at L%d would end below L0", s, inputLevel)
+	}
+	return out, nil
+}
+
+func monomialExtraLevelForPrecompute(inputLevel, s int) (int, error) {
+	if inputLevel < 0 {
+		return 0, fmt.Errorf("negative monomial input level L%d", inputLevel)
+	}
+	if s <= 1 {
+		return inputLevel, nil
+	}
+	if !isPow2(s) {
+		return 0, fmt.Errorf("s=%d must be a positive power of two", s)
+	}
+	ell := log2Pow2(s)
+	extra := inputLevel - (ell - 1)
+	if extra < 0 {
+		return 0, fmt.Errorf("monomial extra x^(s/2) for s=%d at L%d would be below L0", s, inputLevel)
+	}
+	return extra, nil
+}
+
+func estimateAlg5PrecomputeLevels(params bfv.Parameters, m, d, inputLevel int, dropBeforeLT bool, ltLevel, ltPostLevel int, deferLTPostRescale bool) (ct1Level, ct2Level, ltInputLevel, resolvedLTPostLevel, leadLevel int, err error) {
+	if m <= 0 || params.MaxSlots()%m != 0 {
+		return 0, 0, 0, 0, 0, fmt.Errorf("m=%d must divide MaxSlots=%d", m, params.MaxSlots())
+	}
+	r := params.MaxSlots() / m
+	if d <= r || d > r*r || d%r != 0 {
+		return 0, 0, 0, 0, 0, fmt.Errorf("Algorithm 5 requires r < d <= r^2 and r|d, got d=%d, r=%d, m=%d", d, r, m)
+	}
+	s := d / r
+	ct1Level, err = monomialOutputLevelForPrecompute(inputLevel, r)
+	if err != nil {
+		return 0, 0, 0, 0, 0, fmt.Errorf("estimating ct1/ctP level failed: %w", err)
+	}
+	ctHalfLevel, err := monomialExtraLevelForPrecompute(inputLevel, r)
+	if err != nil {
+		return 0, 0, 0, 0, 0, fmt.Errorf("estimating x^(r/2) level failed: %w", err)
+	}
+	ctRLevel := ctHalfLevel - 1
+	if ctRLevel < 0 {
+		return 0, 0, 0, 0, 0, fmt.Errorf("x^r square would go below L0 from x^(r/2) at L%d", ctHalfLevel)
+	}
+	ct2Level, err = monomialOutputLevelForPrecompute(ctRLevel, s)
+	if err != nil {
+		return 0, 0, 0, 0, 0, fmt.Errorf("estimating ct2/grouped-powers level failed: %w", err)
+	}
+	ltInputLevel, resolvedLTPostLevel, err = resolveParallelLTLevelPolicy(ct1Level, ct2Level, dropBeforeLT, ltLevel, ltPostLevel, deferLTPostRescale)
+	if err != nil {
+		return 0, 0, 0, 0, 0, err
+	}
+	ctDHalfLevel, err := monomialExtraLevelForPrecompute(ctRLevel, s)
+	if err != nil {
+		return 0, 0, 0, 0, 0, fmt.Errorf("estimating x^(d/2) level failed: %w", err)
+	}
+	leadLevel = ctDHalfLevel - 1
+	if leadLevel < 0 {
+		return 0, 0, 0, 0, 0, fmt.Errorf("x^d square would go below L0 from x^(d/2) at L%d", ctDHalfLevel)
+	}
+	return ct1Level, ct2Level, ltInputLevel, resolvedLTPostLevel, leadLevel, nil
 }
 
 func preprocessPolyEvalPlaintexts(params bfv.Parameters, encoder *bfv.Encoder, m, d int, coeffsLower [][]uint64, leadCoeffs []uint64) (*PreprocessedPolyEval, error) {
-	pre := &PreprocessedPolyEval{D: d, M: m}
-	leadVec, err := sparsePackLeadingCoeffs(leadCoeffs, params.MaxSlots())
-	if err != nil {
-		return nil, err
+	return preprocessPolyEvalPlaintextsAligned(params, encoder, m, d, coeffsLower, leadCoeffs, params.MaxLevel(), true, -1, 2, false, false)
+}
+
+func preprocessPolyEvalPlaintextsAligned(params bfv.Parameters, encoder *bfv.Encoder, m, d int, coeffsLower [][]uint64, leadCoeffs []uint64, inputLevel int, dropBeforeLT bool, ltLevel, ltPostLevel int, deferLTPostRescale bool, ltOnly bool) (*PreprocessedPolyEval, error) {
+	pre := &PreprocessedPolyEval{D: d, M: m, InputLevel: inputLevel, CT1Level: -1, CT2Level: -1, LTLevel: -1, LTPostLevel: -1, LeadLevel: -1}
+	if ltOnly {
+		pre.Mode = "LT-only large-branch precompute"
+	} else {
+		pre.Mode = "full Algorithm-5 precompute"
 	}
-	pre.LeadPT, err = encodeBatchedPlaintextAtMaxLevel(params, encoder, leadVec)
-	if err != nil {
-		return nil, fmt.Errorf("failed to pre-encode leading x^d plaintext: %w", err)
+	if inputLevel < 0 || inputLevel > params.MaxLevel() {
+		return nil, fmt.Errorf("invalid polynomial input level L%d for MaxLevel=%d", inputLevel, params.MaxLevel())
+	}
+	if m <= 0 || params.MaxSlots()%m != 0 {
+		return nil, fmt.Errorf("m=%d must divide MaxSlots=%d", m, params.MaxSlots())
 	}
 	r := params.MaxSlots() / m
+	var err error
 	if m == 1 && d <= r {
-		pre.LowerMon, err = preprocessMonomialPlaintexts(params, encoder, m, coeffsLower)
+		if ltOnly {
+			return nil, fmt.Errorf("LT-only precompute is not applicable to the m=1 direct path")
+		}
+		pre.LeadLevel = inputLevel
+		if d > 1 {
+			ctHalfLevel, err := monomialExtraLevelForPrecompute(inputLevel, d)
+			if err != nil {
+				return nil, err
+			}
+			pre.LeadLevel = ctHalfLevel - 1
+			if pre.LeadLevel < 0 {
+				return nil, fmt.Errorf("leading term plaintext level would be negative")
+			}
+		}
+		leadVec, err := sparsePackLeadingCoeffs(leadCoeffs, params.MaxSlots())
+		if err != nil {
+			return nil, err
+		}
+		pre.LeadPT, err = encodeBatchedPlaintextAtLevel(params, encoder, leadVec, pre.LeadLevel, nil)
+		if err != nil {
+			return nil, fmt.Errorf("failed to pre-encode leading x^d plaintext at L%d: %w", pre.LeadLevel, err)
+		}
+		pre.LeadVec = cloneTraceSlotsIfNeeded(leadVec)
+		pre.LowerMon, err = preprocessMonomialPlaintextsAtInputLevel(params, encoder, m, coeffsLower, inputLevel)
 		return pre, err
 	}
 	if d <= r || d > r*r || d%r != 0 {
 		return nil, fmt.Errorf("Algorithm 5 requires r < d <= r^2 and r|d unless m=1 uses the direct path, got d=%d, r=%d, m=%d", d, r, m)
 	}
-	pre.OnesRMon, err = preprocessMonomialPlaintexts(params, encoder, m, buildAllOnesCoeffs(m, r))
-	if err != nil {
-		return nil, err
-	}
 	s := d / r
-	pre.OnesSMon, err = preprocessMonomialPlaintexts(params, encoder, m, buildAllOnesCoeffs(m, s))
+	ct1Level, ct2Level, ltInputLevel, resolvedLTPostLevel, leadLevel, err := estimateAlg5PrecomputeLevels(params, m, d, inputLevel, dropBeforeLT, ltLevel, ltPostLevel, deferLTPostRescale)
 	if err != nil {
 		return nil, err
 	}
-	U := buildPatersonStockmeyerMatrices(coeffsLower, r)
-	pre.LT, err = preprocessParallelLT3(params, encoder, U, m, s, r)
+	pre.CT1Level = ct1Level
+	pre.CT2Level = ct2Level
+	pre.LTLevel = ltInputLevel
+	pre.LTPostLevel = resolvedLTPostLevel
+	pre.LeadLevel = leadLevel
+	if !ltOnly {
+		leadVec, err := sparsePackLeadingCoeffs(leadCoeffs, params.MaxSlots())
+		if err != nil {
+			return nil, err
+		}
+		pre.LeadPT, err = encodeBatchedPlaintextAtLevel(params, encoder, leadVec, leadLevel, nil)
+		if err != nil {
+			return nil, fmt.Errorf("failed to pre-encode leading x^d plaintext at L%d: %w", leadLevel, err)
+		}
+		pre.LeadVec = cloneTraceSlotsIfNeeded(leadVec)
+		pre.OnesRMon, err = preprocessMonomialPlaintextsAtInputLevel(params, encoder, m, buildAllOnesCoeffs(m, r), inputLevel)
+		if err != nil {
+			return nil, err
+		}
+		ctHalfLevel, err := monomialExtraLevelForPrecompute(inputLevel, r)
+		if err != nil {
+			return nil, err
+		}
+		ctRLevel := ctHalfLevel - 1
+		pre.OnesSMon, err = preprocessMonomialPlaintextsAtInputLevel(params, encoder, m, buildAllOnesCoeffs(m, s), ctRLevel)
+		if err != nil {
+			return nil, err
+		}
+	}
+	U := buildPatersonStockmeyerMatrixViews(coeffsLower, r)
+	pre.LT, err = preprocessParallelLT3ViewsAtLevel(params, encoder, U, m, s, r, ltInputLevel)
 	return pre, err
 }
 
 func mulPlainRescale(eval *bfv.Evaluator, ct *rlwe.Ciphertext, plain []uint64) (*rlwe.Ciphertext, error) {
+	return mulPlainRescaleNamed(eval, ct, plain, "")
+}
+
+func mulPlainRescaleNamed(eval *bfv.Evaluator, ct *rlwe.Ciphertext, plain []uint64, traceName string) (*rlwe.Ciphertext, error) {
+	st := time.Now()
 	out, err := eval.MulNew(ct, plain)
 	if err != nil {
 		return nil, err
@@ -1755,6 +2582,7 @@ func mulPlainRescale(eval *bfv.Evaluator, ct *rlwe.Ciphertext, plain []uint64) (
 	if err = eval.Rescale(out, out); err != nil {
 		return nil, err
 	}
+	logMulTrace(mulTraceName("mulPlainRescale", traceName), "ct-pt", ct, nil, out, true, time.Since(st), expectedForCtPlainMul(ct, plain))
 	return out, nil
 }
 
@@ -1791,6 +2619,7 @@ func HomomorphicSparseLinearTransformBSGS(
 		if err != nil {
 			return nil, stats, fmt.Errorf("baby rotation by %d failed: %w", k, err)
 		}
+		polyRegisterExpectedRotateColumns(rot, ct, k)
 		baby[k] = rot
 		stats.Rotations++
 		stats.BabyRotations++
@@ -1807,18 +2636,28 @@ func HomomorphicSparseLinearTransformBSGS(
 				break
 			}
 			shiftedDiag := rotateLeftUint64(diagExt[j], -giantShift)
-			term, err := mulPlainRescale(eval, baby[k], shiftedDiag)
+
+			// For SlotToCoeff we intentionally do NOT rescale each diagonal term.
+			// The whole StC linear transform is accumulated at the input level.
+			// The caller then performs either one direct post-StC Rescale/ModSwitch
+			// to Q'=Q[0], or a two-step buffer rescale Lk -> Lbuffer -> Q'.
+			stMul := time.Now()
+			term, err := eval.MulNew(baby[k], shiftedDiag)
+			durMul := time.Since(stMul)
 			if err != nil {
 				return nil, stats, fmt.Errorf("plaintext-ciphertext multiplication for diagonal %d failed: %w", j, err)
 			}
+			logMulTrace(fmt.Sprintf("SlotToCoeff BSGS(stream,no-rescale): term j=%d from giant i=%d, baby k=%d", j, i, k), "ct-pt-StC", baby[k], nil, term, false, durMul, expectedForCtPlainMul(baby[k], shiftedDiag))
 			stats.PlainCipherMults++
 			if block == nil {
 				block = term
 			} else {
+				oldBlockExpected := polyExpectedClone(block)
 				block, err = eval.AddNew(block, term)
 				if err != nil {
 					return nil, stats, fmt.Errorf("block add for diagonal %d failed: %w", j, err)
 				}
+				polyRegisterExpectedAddSaved(block, oldBlockExpected, term)
 				stats.Additions++
 			}
 		}
@@ -1832,6 +2671,7 @@ func HomomorphicSparseLinearTransformBSGS(
 			if err != nil {
 				return nil, stats, fmt.Errorf("giant rotation by %d failed: %w", giantShift, err)
 			}
+			polyRegisterExpectedRotateColumns(rot, block, giantShift)
 			block = rot
 			stats.Rotations++
 			stats.GiantRotations++
@@ -1840,11 +2680,13 @@ func HomomorphicSparseLinearTransformBSGS(
 		if acc == nil {
 			acc = block
 		} else {
+			oldAccExpected := polyExpectedClone(acc)
 			var err error
 			acc, err = eval.AddNew(acc, block)
 			if err != nil {
 				return nil, stats, fmt.Errorf("accumulator add for giant block %d failed: %w", i, err)
 			}
+			polyRegisterExpectedAddSaved(acc, oldAccExpected, block)
 			stats.Additions++
 		}
 	}
@@ -2186,45 +3028,64 @@ const (
 )
 
 type PolyNoiseTraceEntry struct {
-	Name              string
-	Level             int
-	CurrentLogQBits   int
-	ScaleModT         uint64
-	NonZeroCoeffNoise int
-	MaxCoeffNoiseAbs  string
-	CoeffNoisePreview []string
-	TotalCoefficients int
+	Name               string
+	Level              int
+	CurrentLogQBits    int
+	ScaleModT          uint64
+	NonZeroCoeffNoise  int
+	MaxCoeffNoiseAbs   string
+	MaxCoeffNoiseBits  int
+	ApproxErrorAbs     string
+	RequiredBitsRaw    int
+	NoiseBudgetBits    int
+	CoeffNoisePreview  []string
+	TotalCoefficients  int
+	DecodedSlotBad     int
+	DecodedSlotTotal   int
+	DecodedSlotMaxAbs  int64
+	DecodedSlotPreview []string
 }
 
 type PolyNoiseTracer struct {
-	Enabled bool
-	Params  bfv.Parameters
-	Encoder *bfv.Encoder
-	Dec     *rlwe.Decryptor
-	Preview int
-	Full    bool
-	Entries []PolyNoiseTraceEntry
+	Enabled   bool
+	Params    bfv.Parameters
+	Encoder   *bfv.Encoder
+	Dec       *rlwe.Decryptor
+	Preview   int
+	Full      bool
+	Entries   []PolyNoiseTraceEntry
+	ProbeTime time.Duration
 }
 
 var globalPolyNoiseTracer *PolyNoiseTracer
 var globalPolyNoiseBase []uint64
 var globalPolyNoiseCoeffLower [][]uint64
 var globalPolyNoiseLeadCoeffs []uint64
+var globalCt2NoiseProbe bool
 
 func setPolyNoiseTraceContext(tr *PolyNoiseTracer, base []uint64, coeffsLower [][]uint64, leadCoeffs []uint64) {
-	// Do not retain or copy per-run LUT data unless exact polynomial-noise tracing is enabled.
-	// For large LUTs this avoids keeping another copy of multi-megabyte or gigabyte slices
-	// alive until the end of the run.
-	if tr == nil || !tr.Enabled {
+	// Do not retain or copy per-run LUT data unless exact polynomial-noise tracing
+	// or the targeted c2/ct2 probe is enabled.  For large LUTs this avoids keeping
+	// another copy of multi-megabyte or gigabyte slices alive until the end of the run.
+	if tr == nil || (!tr.Enabled && !globalCt2NoiseProbe) {
 		clearPolyNoiseTraceContext()
 		return
 	}
 
-	globalPolyNoiseTracer = tr
+	if tr.Enabled {
+		globalPolyNoiseTracer = tr
+	} else {
+		globalPolyNoiseTracer = nil
+	}
 	if base == nil {
 		globalPolyNoiseBase = nil
 	} else {
 		globalPolyNoiseBase = append([]uint64(nil), base...)
+	}
+	if !tr.Enabled {
+		globalPolyNoiseCoeffLower = nil
+		globalPolyNoiseLeadCoeffs = nil
+		return
 	}
 	if coeffsLower == nil {
 		globalPolyNoiseCoeffLower = nil
@@ -2317,15 +3178,67 @@ func (tr *PolyNoiseTracer) Probe(name string, ct *rlwe.Ciphertext, expectedSlots
 			preview[i] = diff.String()
 		}
 	}
+	reqBits, _ := estimateResidualBitsFromNoise(maxAbs, tr.Params.PlaintextModulus(), 0)
+	maxResidualBits := 0
+	if maxAbs.Sign() > 0 {
+		maxResidualBits = maxAbs.BitLen() - 1
+	}
+	approxErr := new(big.Int).Set(maxAbs)
+	if tr.Params.PlaintextModulus() > 0 {
+		approxErr.Quo(approxErr, new(big.Int).SetUint64(tr.Params.PlaintextModulus()))
+	}
+
+	// In addition to the coefficient-domain residual ptGot-Encode(expected),
+	// also decode the ciphertext and compare the decoded slots modulo T.  The
+	// coefficient residual is the BGV/BFV decryptability noise (and can be very
+	// large after dense plaintext multiplications), while the decoded-slot
+	// residual is only a correctness diagnostic modulo T.  Printing both avoids
+	// confusing large but still decryptable coefficient noise with a wrong
+	// plaintext reference.
+	decoded := make([]uint64, tr.Params.MaxSlots())
+	decodedBad := -1
+	decodedTotal := len(expectedSlots)
+	decodedMaxAbs := int64(0)
+	decodedPreview := []string{}
+	if err := tr.Encoder.Decode(ptGot, decoded); err == nil && len(expectedSlots) <= len(decoded) {
+		decodedBad = 0
+		previewSlots := tr.Preview
+		if tr.Full || previewSlots > len(expectedSlots) {
+			previewSlots = len(expectedSlots)
+		}
+		decodedPreview = make([]string, previewSlots)
+		for i := range expectedSlots {
+			d := centeredDiff(decoded[i], expectedSlots[i], tr.Params.PlaintextModulus())
+			if d != 0 {
+				decodedBad++
+			}
+			ad := abs64(d)
+			if ad > decodedMaxAbs {
+				decodedMaxAbs = ad
+			}
+			if i < previewSlots {
+				decodedPreview[i] = fmt.Sprintf("%d", d)
+			}
+		}
+	}
+
 	entry := PolyNoiseTraceEntry{
-		Name:              name,
-		Level:             ct.Level(),
-		CurrentLogQBits:   bigQ.BitLen(),
-		ScaleModT:         ct.Scale.Uint64() % tr.Params.PlaintextModulus(),
-		NonZeroCoeffNoise: nonZero,
-		MaxCoeffNoiseAbs:  maxAbs.String(),
-		CoeffNoisePreview: preview,
-		TotalCoefficients: len(gotBig),
+		Name:               name,
+		Level:              ct.Level(),
+		CurrentLogQBits:    bigQ.BitLen(),
+		ScaleModT:          scaleModUint64(ct.Scale, tr.Params.PlaintextModulus()),
+		NonZeroCoeffNoise:  nonZero,
+		MaxCoeffNoiseAbs:   maxAbs.String(),
+		MaxCoeffNoiseBits:  maxResidualBits,
+		ApproxErrorAbs:     approxErr.String(),
+		RequiredBitsRaw:    reqBits,
+		NoiseBudgetBits:    bigQ.BitLen() - reqBits,
+		CoeffNoisePreview:  preview,
+		TotalCoefficients:  len(gotBig),
+		DecodedSlotBad:     decodedBad,
+		DecodedSlotTotal:   decodedTotal,
+		DecodedSlotMaxAbs:  decodedMaxAbs,
+		DecodedSlotPreview: decodedPreview,
 	}
 	tr.Entries = append(tr.Entries, entry)
 	return nil
@@ -2341,19 +3254,117 @@ func (tr *PolyNoiseTracer) Print() {
 		fmt.Printf("  level                    : %d\n", e.Level)
 		fmt.Printf("  current logQ bits        : %d\n", e.CurrentLogQBits)
 		fmt.Printf("  scale mod T              : %d\n", e.ScaleModT)
-		fmt.Printf("  nonzero coeff noise      : %d / %d\n", e.NonZeroCoeffNoise, e.TotalCoefficients)
-		fmt.Printf("  max |coeff noise|        : %s\n", e.MaxCoeffNoiseAbs)
-		fmt.Printf("  coeff noise preview      : %v\n", e.CoeffNoisePreview)
+		fmt.Printf("  nonzero coeff residual   : %d / %d\n", e.NonZeroCoeffNoise, e.TotalCoefficients)
+		fmt.Printf("  max |coeff residual|     : %s  (≈2^%d)\n", e.MaxCoeffNoiseAbs, e.MaxCoeffNoiseBits)
+		fmt.Printf("  approx |error|=res/T     : %s\n", e.ApproxErrorAbs)
+		fmt.Printf("  required logQ raw        : %d\n", e.RequiredBitsRaw)
+		fmt.Printf("  coefficient noise budget : %d bits\n", e.NoiseBudgetBits)
+		fmt.Printf("  coeff residual preview   : %v\n", e.CoeffNoisePreview)
+		if e.DecodedSlotBad >= 0 {
+			fmt.Printf("  decoded-slot mismatches  : %d / %d\n", e.DecodedSlotBad, e.DecodedSlotTotal)
+			fmt.Printf("  decoded-slot max |diff|  : %d\n", e.DecodedSlotMaxAbs)
+			fmt.Printf("  decoded-slot diff preview: %v\n", e.DecodedSlotPreview)
+		} else {
+			fmt.Printf("  decoded-slot residual    : n/a\n")
+		}
 	}
 	fmt.Println("--------------------------------------------------------------------------------------------")
 	fmt.Println()
 }
 
+func printImmediateCt2NoiseProbe(e PolyNoiseTraceEntry) {
+	fmt.Println()
+	fmt.Println("---------- Immediate ct2/grouped-powers noise checkpoint ----------")
+	fmt.Printf("%s:\n", e.Name)
+	fmt.Printf("  level                    : %d\n", e.Level)
+	fmt.Printf("  current logQ bits        : %d\n", e.CurrentLogQBits)
+	fmt.Printf("  scale mod T              : %d\n", e.ScaleModT)
+	fmt.Printf("  max |coeff residual|     : %s  (≈2^%d)\n", e.MaxCoeffNoiseAbs, e.MaxCoeffNoiseBits)
+	fmt.Printf("  required logQ raw        : %d\n", e.RequiredBitsRaw)
+	fmt.Printf("  coefficient noise budget : %d bits\n", e.NoiseBudgetBits)
+	fmt.Printf("  coeff residual preview   : %v\n", e.CoeffNoisePreview)
+	if e.DecodedSlotBad >= 0 {
+		fmt.Printf("  decoded-slot mismatches  : %d / %d\n", e.DecodedSlotBad, e.DecodedSlotTotal)
+		fmt.Printf("  decoded-slot max |diff|  : %d\n", e.DecodedSlotMaxAbs)
+		fmt.Printf("  decoded-slot diff preview: %v\n", e.DecodedSlotPreview)
+	}
+	fmt.Println("-------------------------------------------------------------------")
+	fmt.Println()
+}
+
 func maybeTracePolyNoise(name string, ct *rlwe.Ciphertext, expectedSlots []uint64) error {
+	polyRegisterExpected(ct, expectedSlots)
 	if globalPolyNoiseTracer == nil || !globalPolyNoiseTracer.Enabled {
 		return nil
 	}
-	return globalPolyNoiseTracer.Probe(name, ct, expectedSlots)
+	start := time.Now()
+	err := globalPolyNoiseTracer.Probe(name, ct, expectedSlots)
+	globalPolyNoiseTracer.ProbeTime += time.Since(start)
+	return err
+}
+
+func maybeTraceAndPrintImmediatePolyNoise(name string, ct *rlwe.Ciphertext, expectedSlots []uint64, title string) error {
+	polyRegisterExpected(ct, expectedSlots)
+	if title == "" {
+		title = name
+	}
+
+	// Also insert a checkpoint row only when the expensive operation-noise probes
+	// are explicitly enabled. Plain -mul-trace is kept lightweight and does not
+	// decrypt/decode c2/ct2.
+	if mulTraceNoiseActive() {
+		logOpTrace(title, "checkpoint", ct, nil, ct, false, 0, expectedSlots)
+	}
+
+	if globalPolyNoiseTracer != nil && globalPolyNoiseTracer.Enabled {
+		before := len(globalPolyNoiseTracer.Entries)
+		start := time.Now()
+		if err := globalPolyNoiseTracer.Probe(name, ct, expectedSlots); err != nil {
+			globalPolyNoiseTracer.ProbeTime += time.Since(start)
+			return err
+		}
+		globalPolyNoiseTracer.ProbeTime += time.Since(start)
+		if len(globalPolyNoiseTracer.Entries) > before {
+			e := globalPolyNoiseTracer.Entries[len(globalPolyNoiseTracer.Entries)-1]
+			mismatch := "n/a"
+			if e.DecodedSlotBad >= 0 {
+				mismatch = fmt.Sprintf("%d/%d", e.DecodedSlotBad, e.DecodedSlotTotal)
+			}
+			fmt.Printf("[immediate noise probe] %s: level=L%d/%db, scale mod T=%d, noiseBudget=%d bits, max|noise|=%s, requiredLogQ=%d, decodedMismatches=%s\n",
+				title,
+				e.Level,
+				e.CurrentLogQBits,
+				e.ScaleModT,
+				e.NoiseBudgetBits,
+				e.MaxCoeffNoiseAbs,
+				e.RequiredBitsRaw,
+				mismatch)
+		}
+		return nil
+	}
+
+	// Lightweight standalone probe: enabled by -ct2-noise-probe even when the full
+	// polynomial noise trace is disabled. It reuses the same decrypt/encode residual
+	// convention as the exact poly-noise trace.
+	if globalCt2NoiseProbe && globalMulTracer != nil {
+		probeStart := time.Now()
+		probe, err := probeCipherNoiseAgainstSlots(globalMulTracer.Params, globalMulTracer.Encoder, globalMulTracer.Dec, ct, expectedSlots, 0, name)
+		globalMulTracer.ProbeTime += time.Since(probeStart)
+		if err != nil {
+			return err
+		}
+		if probe != nil {
+			fmt.Printf("[immediate noise probe] %s: level=L%d/%db, scale mod T=%d, noiseBudget=%d bits, max|noise|=%s, requiredLogQ=%d\n",
+				title,
+				ct.Level(),
+				probe.CurrentLogQBits,
+				probe.ScaleModT,
+				probe.CurrentLogQBits-probe.RequiredBitsNoMargin,
+				probe.MaxCoeffNoiseAbs,
+				probe.RequiredBitsNoMargin)
+		}
+	}
+	return nil
 }
 
 func powVectorMod(base []uint64, exp int, mod uint64) []uint64 {
@@ -2502,6 +3513,11 @@ func zeroCiphertextFrom(eval *bfv.Evaluator, ct *rlwe.Ciphertext) (*rlwe.Ciphert
 }
 
 func mulCtRelinRescale(eval *bfv.Evaluator, ct0 *rlwe.Ciphertext, op1 rlwe.Operand) (*rlwe.Ciphertext, error) {
+	return mulCtRelinRescaleNamed(eval, ct0, op1, "")
+}
+
+func mulCtRelinRescaleNamed(eval *bfv.Evaluator, ct0 *rlwe.Ciphertext, op1 rlwe.Operand, traceName string) (*rlwe.Ciphertext, error) {
+	st := time.Now()
 	out, err := eval.MulRelinNew(ct0, op1)
 	if err != nil {
 		return nil, err
@@ -2509,10 +3525,57 @@ func mulCtRelinRescale(eval *bfv.Evaluator, ct0 *rlwe.Ciphertext, op1 rlwe.Opera
 	if err = eval.Rescale(out, out); err != nil {
 		return nil, err
 	}
+	var ct1 *rlwe.Ciphertext
+	if v, ok := op1.(*rlwe.Ciphertext); ok {
+		ct1 = v
+	}
+	logMulTrace(mulTraceName("mulCtRelinRescale", traceName), "ct-ct", ct0, ct1, out, true, time.Since(st), expectedForCtCtMul(out, ct0, ct1))
+	return out, nil
+}
+func mulCtRelinNoRescaleNamed(eval *bfv.Evaluator, ct0 *rlwe.Ciphertext, op1 rlwe.Operand, traceName string) (*rlwe.Ciphertext, error) {
+	st := time.Now()
+	out, err := eval.MulRelinNew(ct0, op1)
+	if err != nil {
+		return nil, err
+	}
+	var ct1 *rlwe.Ciphertext
+	if v, ok := op1.(*rlwe.Ciphertext); ok {
+		ct1 = v
+	}
+	logMulTrace(mulTraceName("mulCtRelinNoRescale", traceName), "ct-ct", ct0, ct1, out, false, time.Since(st), expectedForCtCtMul(out, ct0, ct1))
 	return out, nil
 }
 
+func shouldDeferAlg5PointwiseRescale(m int, ctY, ctG *rlwe.Ciphertext) bool {
+	return globalDeferPointwiseRescale && ctY != nil && ctG != nil && ctY.Level() == ctG.Level() && ctY.Level() > 0
+}
+
+func alg5PointwiseMultiplyMaybeDeferred(eval *bfv.Evaluator, ctY, ctG *rlwe.Ciphertext, m, s int) (*rlwe.Ciphertext, int, error) {
+	name := fmt.Sprintf("Algorithm 5 line 5: ctCollapsed = ct3 * ct2 = block-values * grouped-powers; s=%d", s)
+	if shouldDeferAlg5PointwiseRescale(m, ctY, ctG) {
+		out, err := mulCtRelinNoRescaleNamed(eval, ctY, ctG, name+"; deferred rescale after RotateAndSum")
+		if err != nil {
+			return nil, -1, err
+		}
+		return out, out.Level() - 1, nil
+	}
+	out, err := mulCtRelinRescaleNamed(eval, ctY, ctG, name)
+	return out, -1, err
+}
+
+func rescaleAfterAlg5RotateAndSumIfNeeded(eval *bfv.Evaluator, ctBase *rlwe.Ciphertext, targetLevel int) (time.Duration, error) {
+	if targetLevel < 0 {
+		return 0, nil
+	}
+	return rescaleCiphertextToLevelWithTrace(eval, ctBase, targetLevel, "Algorithm 5 deferred rescale after RotateAndSum")
+}
+
 func mulCtLazyRelinRescale(eval *bfv.Evaluator, ct0 *rlwe.Ciphertext, op1 rlwe.Operand) (*rlwe.Ciphertext, error) {
+	return mulCtLazyRelinRescaleNamed(eval, ct0, op1, "")
+}
+
+func mulCtLazyRelinRescaleNamed(eval *bfv.Evaluator, ct0 *rlwe.Ciphertext, op1 rlwe.Operand, traceName string) (*rlwe.Ciphertext, error) {
+	st := time.Now()
 	out, err := eval.MulNew(ct0, op1)
 	if err != nil {
 		return nil, err
@@ -2520,6 +3583,11 @@ func mulCtLazyRelinRescale(eval *bfv.Evaluator, ct0 *rlwe.Ciphertext, op1 rlwe.O
 	if err = eval.Rescale(out, out); err != nil {
 		return nil, err
 	}
+	var ct1 *rlwe.Ciphertext
+	if v, ok := op1.(*rlwe.Ciphertext); ok {
+		ct1 = v
+	}
+	logMulTrace(mulTraceName("mulCtLazyRelinRescale", traceName), "ct-ct-lazy", ct0, ct1, out, true, time.Since(st), expectedForCtCtMul(out, ct0, ct1))
 	return out, nil
 }
 
@@ -2593,6 +3661,7 @@ func MonomialGenExtra(
 		if err != nil {
 			return nil, nil, timing, fmt.Errorf("failed to add constant vector: %w", err)
 		}
+		polyRegisterExpected(out, fVec)
 		timing.Total = time.Since(totalStart)
 		return out, nil, timing, nil
 	}
@@ -2600,8 +3669,9 @@ func MonomialGenExtra(
 	powStart := time.Now()
 	xPow := make([]*rlwe.Ciphertext, ell)
 	xPow[0] = ct.CopyNew()
+	polyCopyExpected(ct, xPow[0])
 	for i := 1; i < ell; i++ {
-		xPow[i], err = mulCtRelinRescale(eval, xPow[i-1], xPow[i-1])
+		xPow[i], err = mulCtRelinRescaleNamed(eval, xPow[i-1], xPow[i-1], fmt.Sprintf("MonomialGen(s=%d): power chain xPow[%d] = xPow[%d]^2", s, i, i-1))
 		if err != nil {
 			return nil, nil, timing, fmt.Errorf("failed to compute x^(2^%d): %w", i, err)
 		}
@@ -2611,6 +3681,7 @@ func MonomialGenExtra(
 	var extra *rlwe.Ciphertext
 	if wantExtra {
 		extra = xPow[ell-1].CopyNew()
+		polyCopyExpected(xPow[ell-1], extra)
 	}
 
 	yStart := time.Now()
@@ -2620,7 +3691,7 @@ func MonomialGenExtra(
 	firstMask := hadamard(cExt[0], fVec, T)
 	firstConst := hadamard(dExt[0], fVec, T)
 
-	tmp, err := mulPlainRescale(eval, xPow[0], firstMask)
+	tmp, err := mulPlainRescaleNamed(eval, xPow[0], firstMask, fmt.Sprintf("MonomialGen(s=%d): first masked factor tmp = xPow[0] * C_0", s))
 	if err != nil {
 		return nil, nil, timing, fmt.Errorf("failed first masked multiply: %w", err)
 	}
@@ -2628,9 +3699,10 @@ func MonomialGenExtra(
 	if err != nil {
 		return nil, nil, timing, fmt.Errorf("failed first masked add: %w", err)
 	}
+	polyRegisterExpectedAddPlain(acc, tmp, firstConst)
 
 	for i := 1; i < ell; i++ {
-		tmp, err = mulPlainRescale(eval, xPow[i], cExt[i])
+		tmp, err = mulPlainRescaleNamed(eval, xPow[i], cExt[i], fmt.Sprintf("MonomialGen(s=%d): bit %d masked factor tmp = xPow[%d] * C_%d", s, i, i, i))
 		if err != nil {
 			return nil, nil, timing, fmt.Errorf("failed masked multiply at bit %d: %w", i, err)
 		}
@@ -2638,7 +3710,8 @@ func MonomialGenExtra(
 		if err != nil {
 			return nil, nil, timing, fmt.Errorf("failed masked add at bit %d: %w", i, err)
 		}
-		acc, err = mulCtRelinRescale(eval, acc, factor)
+		polyRegisterExpectedAddPlain(factor, tmp, dExt[i])
+		acc, err = mulCtRelinRescaleNamed(eval, acc, factor, fmt.Sprintf("MonomialGen(s=%d): bit %d combine acc = acc * factor", s, i))
 		if err != nil {
 			return nil, nil, timing, fmt.Errorf("failed ciphertext multiply at bit %d: %w", i, err)
 		}
@@ -2712,6 +3785,71 @@ func buildMaskVector(A, B [][][]uint64, j, n, ell, r int) []uint64 {
 	return mask
 }
 
+// buildShiftedMaskVectorInPlace is the allocation-light version of
+// rotateWithinHalves(buildMaskVector(A, B, j, n, ell, r), -giantShift).
+// The original two-step implementation allocated the full mask, two diagonal
+// work arrays, and the rotated mask for every LT term. In the streaming LT path
+// this happens O(ell) times, so for N=65536 and ell=1024 it creates several GiB
+// of transient garbage. This routine writes the final shifted mask directly
+// into a reusable buffer.
+func buildShiftedMaskVectorInPlace(out []uint64, A, B [][][]uint64, j, n, ell, r int, giantShift int) []uint64 {
+	total := r * n
+	if cap(out) < total {
+		out = make([]uint64, total)
+	} else {
+		out = out[:total]
+	}
+
+	halfCols := r / 2
+	halfLen := halfCols * n
+
+	// giantShift is always a multiple of n in Algorithm 2/3. Therefore the
+	// rotation within each half is a row rotation, and we can avoid per-slot
+	// division/modulo in the hot loop.
+	shiftRows := 0
+	if n > 0 {
+		shiftRows = (-(giantShift / n)) % halfCols
+		if shiftRows < 0 {
+			shiftRows += halfCols
+		}
+	}
+
+	for dstRow := 0; dstRow < halfCols; dstRow++ {
+		srcRow := dstRow + shiftRows
+		if srcRow >= halfCols {
+			srcRow -= halfCols
+		}
+		rowMod := srcRow % ell
+		col := srcRow + j
+		if col >= halfCols {
+			col -= halfCols
+		}
+		rowBase := dstRow * n
+		for idx := 0; idx < n; idx++ {
+			out[rowBase+idx] = A[idx][rowMod][col]
+		}
+	}
+
+	base := halfLen
+	for dstRow := 0; dstRow < halfCols; dstRow++ {
+		srcRow := dstRow + shiftRows
+		if srcRow >= halfCols {
+			srcRow -= halfCols
+		}
+		rowMod := srcRow % ell
+		col := srcRow + j
+		if col >= halfCols {
+			col -= halfCols
+		}
+		rowBase := base + dstRow*n
+		for idx := 0; idx < n; idx++ {
+			out[rowBase+idx] = B[idx][rowMod][col]
+		}
+	}
+
+	return out
+}
+
 func splitUHorizontal(U [][][]uint64, ell, r int) (A, B [][][]uint64) {
 	n := len(U)
 	half := r / 2
@@ -2771,6 +3909,7 @@ func rowSwapCipher(params bfv.Parameters, eval *bfv.Evaluator, ct *rlwe.Cipherte
 	if err := eval.Automorphism(ct, galEl, out); err != nil {
 		return nil, err
 	}
+	polyRegisterExpectedRowSwap(out, ct)
 	return out, nil
 }
 
@@ -2808,10 +3947,12 @@ func parallelLT2FirstStageBSGSHoisted(
 			return nil, fmt.Errorf("alg2 bsgs baby rotation k=%d failed: %w", k, err)
 		}
 		tm.BabyRotations += time.Since(stRot)
+		polyRegisterExpectedRotateColumns(rot, ctIn, k*n)
 		baby[k] = rot
 	}
 
 	var acc *rlwe.Ciphertext
+	var shiftedMaskBuf []uint64
 
 	for i := 0; i < b; i++ {
 		giantShift := i * g * n
@@ -2823,22 +3964,28 @@ func parallelLT2FirstStageBSGSHoisted(
 				break
 			}
 
-			mask := buildMaskVector(A, B, j, n, ell, r)
-			shiftedMask := rotateWithinHalves(mask, -giantShift)
+			shiftedMask := buildShiftedMaskVectorInPlace(shiftedMaskBuf, A, B, j, n, ell, r, giantShift)
+			shiftedMaskBuf = shiftedMask
 
 			stMul := time.Now()
 			term, err := eval.MulNew(baby[k], shiftedMask)
 			if err != nil {
 				return nil, fmt.Errorf("alg2 bsgs term multiply i=%d k=%d j=%d failed: %w", i, k, j, err)
 			}
-			tm.PlaintextCipherMul += time.Since(stMul)
+			durMul := time.Since(stMul)
+			tm.PlaintextCipherMul += durMul
+			if mulTraceActive() {
+				logMulTrace(fmt.Sprintf("ParallelLT/BSGS(stream): term = baby[%d] * shiftedMask[j=%d], giant block i=%d", k, j, i), "ct-pt-LT", baby[k], nil, term, false, durMul, expectedForCtPlainMul(baby[k], shiftedMask))
+			}
 
 			if block == nil {
 				block = term
 			} else {
+				oldBlockExpected := polyExpectedClone(block)
 				if err := eval.Add(block, term, block); err != nil {
 					return nil, fmt.Errorf("alg2 bsgs block add i=%d k=%d j=%d failed: %w", i, k, j, err)
 				}
+				polyRegisterExpectedAddSaved(block, oldBlockExpected, term)
 			}
 		}
 
@@ -2850,9 +3997,11 @@ func parallelLT2FirstStageBSGSHoisted(
 			if acc == nil {
 				acc = block
 			} else {
+				oldAccExpected := polyExpectedClone(acc)
 				if err := eval.Add(acc, block, acc); err != nil {
 					return nil, fmt.Errorf("alg2 bsgs acc add i=%d failed: %w", i, err)
 				}
+				polyRegisterExpectedAddSaved(acc, oldAccExpected, block)
 			}
 		} else {
 			rot := bfv.NewCiphertext(params, 1, block.Level())
@@ -2862,12 +4011,15 @@ func parallelLT2FirstStageBSGSHoisted(
 				return nil, fmt.Errorf("alg2 bsgs giant rotation i=%d failed: %w", i, err)
 			}
 			tm.GiantRotations += time.Since(stRot)
+			polyRegisterExpectedRotateColumns(rot, block, giantShift)
 			if acc == nil {
 				acc = rot
 			} else {
+				oldAccExpected := polyExpectedClone(acc)
 				if err := eval.Add(acc, rot, acc); err != nil {
 					return nil, fmt.Errorf("alg2 bsgs giant add i=%d failed: %w", i, err)
 				}
+				polyRegisterExpectedAddSaved(acc, oldAccExpected, rot)
 			}
 		}
 	}
@@ -2895,9 +4047,12 @@ func parallelLT2SumColumns(
 		if err := eval.Automorphism(ct, galEl, rot); err != nil {
 			return fmt.Errorf("alg2 sum-columns rotation s=%d failed: %w", s, err)
 		}
+		polyRegisterExpectedRotateColumns(rot, ct, shift)
+		oldCtExpected := polyExpectedClone(ct)
 		if err := eval.Add(ct, rot, ct); err != nil {
 			return fmt.Errorf("alg2 sum-columns add s=%d failed: %w", s, err)
 		}
+		polyRegisterExpectedAddSaved(ct, oldCtExpected, rot)
 	}
 	tm.SecondStageEval += time.Since(start)
 	return nil
@@ -2947,6 +4102,7 @@ func parallelLT3BSGSHoisted(
 		tm.AddStage(t2)
 
 		startPost := time.Now()
+		oldYExpected := polyExpectedClone(y)
 		tauY, err := rowSwapCipher(params, eval, y)
 		if err != nil {
 			return nil, tm, fmt.Errorf("alg3 row swap failed: %w", err)
@@ -2954,6 +4110,7 @@ func parallelLT3BSGSHoisted(
 		if err := eval.Add(y, tauY, y); err != nil {
 			return nil, tm, fmt.Errorf("alg3 add y+tau(y) failed: %w", err)
 		}
+		polyRegisterExpectedAddSaved(y, oldYExpected, tauY)
 		tm.PostProcess += time.Since(startPost)
 
 		tm.Total = time.Since(start)
@@ -2983,9 +4140,11 @@ func parallelLT3BSGSHoisted(
 	tm.AddStage(t2b)
 
 	startPost = time.Now()
+	oldYExpected := polyExpectedClone(y)
 	if err := eval.Add(y, yPrime, y); err != nil {
 		return nil, tm, fmt.Errorf("alg3 add y+y' failed: %w", err)
 	}
+	polyRegisterExpectedAddSaved(y, oldYExpected, yPrime)
 	tm.PostProcess += time.Since(startPost)
 
 	tm.Total = time.Since(start)
@@ -3096,6 +4255,7 @@ func parallelLT3BSGSHoistedViews(
 		}
 		tm.AddStage(t2)
 		startPost := time.Now()
+		oldYExpected := polyExpectedClone(y)
 		tauY, err := rowSwapCipher(params, eval, y)
 		if err != nil {
 			return nil, tm, fmt.Errorf("alg3 row swap failed: %w", err)
@@ -3103,6 +4263,7 @@ func parallelLT3BSGSHoistedViews(
 		if err := eval.Add(y, tauY, y); err != nil {
 			return nil, tm, fmt.Errorf("alg3 add y+tau(y) failed: %w", err)
 		}
+		polyRegisterExpectedAddSaved(y, oldYExpected, tauY)
 		tm.PostProcess += time.Since(startPost)
 		tm.Total = time.Since(start)
 		return y, tm, nil
@@ -3125,9 +4286,11 @@ func parallelLT3BSGSHoistedViews(
 	}
 	tm.AddStage(t2b)
 	startPost = time.Now()
+	oldYExpected := polyExpectedClone(y)
 	if err := eval.Add(y, yPrime, y); err != nil {
 		return nil, tm, fmt.Errorf("alg3 add y+y' failed: %w", err)
 	}
+	polyRegisterExpectedAddSaved(y, oldYExpected, yPrime)
 	tm.PostProcess += time.Since(startPost)
 	tm.Total = time.Since(start)
 	return y, tm, nil
@@ -3318,6 +4481,152 @@ func rescaleCiphertextToLevel(eval *bfv.Evaluator, ct *rlwe.Ciphertext, targetLe
 	return nil
 }
 
+func rescaleCiphertextToLevelWithTrace(eval *bfv.Evaluator, ct *rlwe.Ciphertext, targetLevel int, label string) (time.Duration, error) {
+	if ct == nil {
+		return 0, errors.New("cannot rescale a nil ciphertext")
+	}
+	if targetLevel < 0 {
+		return 0, nil
+	}
+	if targetLevel > ct.Level() {
+		return 0, fmt.Errorf("target level %d exceeds current level %d", targetLevel, ct.Level())
+	}
+	var total time.Duration
+	for ct.Level() > targetLevel {
+		before := ct.CopyNew()
+		beforeLevel := before.Level()
+		expectedOut, _ := polyExpected(ct)
+		if expectedOut != nil {
+			expectedOut = append([]uint64(nil), expectedOut...)
+		}
+		st := time.Now()
+		if err := eval.Rescale(ct, ct); err != nil {
+			return total, fmt.Errorf("final rescale to level %d failed at level %d: %w", targetLevel, beforeLevel, err)
+		}
+		dur := time.Since(st)
+		total += dur
+		if ct.Level() >= beforeLevel {
+			return total, fmt.Errorf("final rescale to level %d made no progress: ciphertext level stayed at %d", targetLevel, beforeLevel)
+		}
+		logOpTrace(fmt.Sprintf("%s: final Rescale/ModSwitch L%d -> L%d", label, beforeLevel, ct.Level()), "final-rescale", before, nil, ct, true, dur, expectedOut)
+	}
+	return total, nil
+}
+
+const ltLevelExtraCT2Level = -2
+const ltPostAutoCT2Level = -2
+
+func resolveParallelLTLevelPolicy(ctPLevel, ct2Level int, dropBeforeLT bool, ltLevel, ltPostLevel int, deferLTPostRescale bool) (inputLevel, postLevel int, err error) {
+	if ctPLevel < 0 {
+		return 0, 0, fmt.Errorf("invalid ParallelLT ct1/ctP level %d", ctPLevel)
+	}
+	if ct2Level < 0 {
+		return 0, 0, fmt.Errorf("invalid ParallelLT ct2/grouped-powers level %d", ct2Level)
+	}
+	if ltLevel < ltLevelExtraCT2Level {
+		return 0, 0, fmt.Errorf("invalid ParallelLT level %d; use -2 for extra-level auto, -1 for fast auto, or a nonnegative manual level", ltLevel)
+	}
+	if ltPostLevel < ltPostAutoCT2Level {
+		return 0, 0, fmt.Errorf("invalid post-ParallelLT level %d; use -2 for auto ct2 level, -1 to disable, or a nonnegative level", ltPostLevel)
+	}
+
+	inputLevel = ctPLevel
+	if ltLevel >= 0 {
+		inputLevel = ltLevel
+	} else if dropBeforeLT && ltLevel == ltLevelExtraCT2Level {
+		// Optional safer policy: run BatchLT one level above the grouped-powers
+		// ciphertext and rescale afterwards. This is slower because every LT
+		// plaintext-ciphertext multiplication carries one extra Q-prime.
+		inputLevel = ct2Level + 1
+		if inputLevel > ctPLevel {
+			inputLevel = ctPLevel
+		}
+	} else if dropBeforeLT && ctPLevel > ct2Level {
+		// Fast default policy: match the original implementation and run BatchLT
+		// directly at the grouped-powers ciphertext level.
+		inputLevel = ct2Level
+	}
+	if inputLevel < 0 {
+		return 0, 0, fmt.Errorf("ParallelLT input level became negative: L%d", inputLevel)
+	}
+	if inputLevel > ctPLevel {
+		return 0, 0, fmt.Errorf("requested ParallelLT level L%d exceeds ct1/ctP level L%d", inputLevel, ctPLevel)
+	}
+
+	postLevel = -1
+	switch {
+	case ltPostLevel == ltPostAutoCT2Level:
+		postLevel = ct2Level
+	case ltPostLevel == -1:
+		postLevel = -1
+	case ltPostLevel >= 0:
+		postLevel = ltPostLevel
+	}
+	if deferLTPostRescale {
+		// Experimental policy: do not normalize the BatchLT output here.
+		// The following ct3*ct2 ciphertext-ciphertext multiplication will perform
+		// the single rescale, so ct3 and ct2 should usually be evaluated at the
+		// same level (the fast default -lt-level=-1 does exactly this).
+		postLevel = -1
+	}
+	if postLevel >= 0 && postLevel > inputLevel {
+		return 0, 0, fmt.Errorf("post-ParallelLT target L%d exceeds BatchLT output/input level L%d", postLevel, inputLevel)
+	}
+	return inputLevel, postLevel, nil
+}
+
+func applyParallelLTLevelPolicy(eval *bfv.Evaluator, ctP, ct2 *rlwe.Ciphertext, dropBeforeLT bool, ltLevel, ltPostLevel int, deferLTPostRescale bool) (inputLevel, postLevel int, err error) {
+	if ctP == nil || ct2 == nil {
+		return 0, 0, errors.New("nil ciphertext passed to ParallelLT level policy")
+	}
+	inputLevel, postLevel, err = resolveParallelLTLevelPolicy(ctP.Level(), ct2.Level(), dropBeforeLT, ltLevel, ltPostLevel, deferLTPostRescale)
+	if err != nil {
+		return 0, 0, err
+	}
+	if ctP.Level() > inputLevel {
+		eval.DropLevel(ctP, ctP.Level()-inputLevel)
+	}
+	return inputLevel, postLevel, nil
+}
+
+func rescaleParallelLTOutputToPolicy(eval *bfv.Evaluator, ctY *rlwe.Ciphertext, targetLevel int, label string) (time.Duration, error) {
+	if ctY == nil {
+		return 0, errors.New("nil BatchLT output ciphertext")
+	}
+	if targetLevel < 0 {
+		return 0, nil
+	}
+	if targetLevel > ctY.Level() {
+		return 0, fmt.Errorf("post-ParallelLT target L%d exceeds BatchLT output level L%d", targetLevel, ctY.Level())
+	}
+	if ctY.Level() == targetLevel {
+		return 0, nil
+	}
+	return rescaleCiphertextToLevelWithTrace(eval, ctY, targetLevel, label)
+}
+
+func formatParallelLTLevelPolicy(dropBeforeLT bool, ltLevel, ltPostLevel int, deferLTPostRescale bool) string {
+	input := "auto ct2.Level()"
+	if ltLevel == ltLevelExtraCT2Level {
+		input = "auto ct2.Level()+1"
+	} else if ltLevel >= 0 {
+		input = fmt.Sprintf("manual L%d", ltLevel)
+	} else if !dropBeforeLT {
+		input = "no pre-drop; use ct1/ctP current level"
+	}
+	post := "auto ct2.Level()"
+	switch {
+	case ltPostLevel == -1:
+		post = "disabled"
+	case ltPostLevel >= 0:
+		post = fmt.Sprintf("manual L%d", ltPostLevel)
+	}
+	if deferLTPostRescale {
+		post = post + "; deferred until ct3*ct2"
+	}
+	return fmt.Sprintf("BatchLT input %s; post-BatchLT rescale %s", input, post)
+}
+
 func dropCiphertextCopyToLevel(eval *bfv.Evaluator, ct *rlwe.Ciphertext, targetLevel int) *rlwe.Ciphertext {
 	out := ct.CopyNew()
 	if targetLevel >= 0 && out.Level() > targetLevel {
@@ -3339,36 +4648,58 @@ func sparseRotateAndSum(params bfv.Parameters, eval *bfv.Evaluator, ct *rlwe.Cip
 	}
 	ell := log2Pow2(s)
 	h := ct.CopyNew()
+	polyCopyExpected(ct, h)
 	for i := 0; i < ell-1; i++ {
 		shift := baseLen * (1 << i)
+		stRot := time.Now()
 		rot, err := eval.RotateColumnsNew(h, shift)
+		durRot := time.Since(stRot)
 		if err != nil {
 			return nil, fmt.Errorf("RotateColumns(%d) failed: %w", shift, err)
 		}
-		h, err = eval.AddNew(h, rot)
+		logOpTrace(fmt.Sprintf("RotateAndSum: Algorithm 5 line 7 ColumnRotation step=%d shift=%d", i, shift), "rot-col", h, nil, rot, false, durRot, expectedForRotateColumns(h, shift))
+		stAdd := time.Now()
+		sum, err := eval.AddNew(h, rot)
+		durAdd := time.Since(stAdd)
 		if err != nil {
 			return nil, fmt.Errorf("Add after RotateColumns(%d) failed: %w", shift, err)
 		}
+		logOpTrace(fmt.Sprintf("RotateAndSum: Algorithm 5 line 7 Add rotated value step=%d shift=%d", i, shift), "add", h, rot, sum, false, durAdd, expectedForAdd(h, rot))
+		h = sum
 	}
 	if s == r {
+		stRot := time.Now()
 		rot, err := eval.RotateRowsNew(h)
+		durRot := time.Since(stRot)
 		if err != nil {
 			return nil, fmt.Errorf("RotateRows failed: %w", err)
 		}
-		h, err = eval.AddNew(h, rot)
+		logOpTrace("RotateAndSum: Algorithm 5 line 10 RowRotation final half-sum", "rot-row", h, nil, rot, false, durRot, expectedForRowSwap(h))
+		stAdd := time.Now()
+		sum, err := eval.AddNew(h, rot)
+		durAdd := time.Since(stAdd)
 		if err != nil {
 			return nil, fmt.Errorf("Add after RotateRows failed: %w", err)
 		}
+		logOpTrace("RotateAndSum: Algorithm 5 line 10 Add RowRotation final half-sum", "add", h, rot, sum, false, durAdd, expectedForAdd(h, rot))
+		h = sum
 	} else {
 		shift := baseLen * (1 << (ell - 1))
+		stRot := time.Now()
 		rot, err := eval.RotateColumnsNew(h, shift)
+		durRot := time.Since(stRot)
 		if err != nil {
 			return nil, fmt.Errorf("final RotateColumns(%d) failed: %w", shift, err)
 		}
-		h, err = eval.AddNew(h, rot)
+		logOpTrace(fmt.Sprintf("RotateAndSum: Algorithm 5 line 12 final ColumnRotation shift=%d", shift), "rot-col", h, nil, rot, false, durRot, expectedForRotateColumns(h, shift))
+		stAdd := time.Now()
+		sum, err := eval.AddNew(h, rot)
+		durAdd := time.Since(stAdd)
 		if err != nil {
 			return nil, fmt.Errorf("final Add after RotateColumns(%d) failed: %w", shift, err)
 		}
+		logOpTrace(fmt.Sprintf("RotateAndSum: Algorithm 5 line 12 final Add after ColumnRotation shift=%d", shift), "add", h, rot, sum, false, durAdd, expectedForAdd(h, rot))
+		h = sum
 	}
 	return h, nil
 }
@@ -3383,7 +4714,7 @@ func addLeadingPowerTerm(params bfv.Parameters, eval *bfv.Evaluator, baseCt, ctP
 	if err != nil {
 		return nil, err
 	}
-	ctLead, err := mulPlainRescale(eval, ctPowD, leadVec)
+	ctLead, err := mulPlainRescaleNamed(eval, ctPowD, leadVec, "Leading term: ctLead = x^d * sparse leading-coefficient vector a_d")
 	if err != nil {
 		return nil, fmt.Errorf("leading plaintext-ciphertext multiplication failed: %w", err)
 	}
@@ -3396,7 +4727,7 @@ func addLeadingPowerTerm(params bfv.Parameters, eval *bfv.Evaluator, baseCt, ctP
 	return out, nil
 }
 
-func polyEvalSparsePow2Alg5(params bfv.Parameters, eval *bfv.Evaluator, ct *rlwe.Ciphertext, m int, coeffsLower [][]uint64, leadCoeffs []uint64, dropBeforeLT bool, ltDropLevel, ltPostLevel int) (*rlwe.Ciphertext, PolyEvalTiming, error) {
+func polyEvalSparsePow2Alg5(params bfv.Parameters, eval *bfv.Evaluator, ct *rlwe.Ciphertext, m int, coeffsLower [][]uint64, leadCoeffs []uint64, dropBeforeLT bool, ltDropLevel, ltPostLevel int, deferLTPostRescale bool) (*rlwe.Ciphertext, PolyEvalTiming, error) {
 	var tm PolyEvalTiming
 	start := time.Now()
 	if len(coeffsLower) == 0 || len(coeffsLower[0]) == 0 {
@@ -3427,7 +4758,7 @@ func polyEvalSparsePow2Alg5(params bfv.Parameters, eval *bfv.Evaluator, ct *rlwe
 	if ctHalf == nil {
 		return nil, tm, errors.New("missing x^(r/2) ciphertext")
 	}
-	ctR, err := mulCtRelinRescale(eval, ctHalf, ctHalf)
+	ctR, err := mulCtRelinRescaleNamed(eval, ctHalf, ctHalf, fmt.Sprintf("Algorithm 5 line 2: ctR = (x^(r/2))^2 = x^r; r=%d", r))
 	if err != nil {
 		return nil, tm, fmt.Errorf("squaring x^(r/2) to x^r failed: %w", err)
 	}
@@ -3438,21 +4769,29 @@ func polyEvalSparsePow2Alg5(params bfv.Parameters, eval *bfv.Evaluator, ct *rlwe
 	if ctDHalf == nil {
 		return nil, tm, errors.New("missing x^(d/2) ciphertext from the second power stage")
 	}
-	if ltDropLevel >= 0 {
-		if ctP.Level() > ltDropLevel {
-			eval.DropLevel(ctP, ctP.Level()-ltDropLevel)
+	if (polyNoiseTraceActiveForCurrentContext(m) || globalCt2NoiseProbe || mulTraceNoiseActive()) && len(globalPolyNoiseBase) > 0 {
+		mod := params.PlaintextModulus()
+		base := globalPolyNoiseBase
+		xR := powVectorMod(base, r, mod)
+		if err := maybeTraceAndPrintImmediatePolyNoise("poly/LUT alg5: grouped powers of x^r", ctG, monomialGenReferenceSlots(xR, buildAllOnesCoeffs(m, s), r, mod), "Algorithm 5 line 3 output c2/ct2 grouped powers"); err != nil {
+			return nil, tm, err
 		}
-	} else if dropBeforeLT && ctP.Level() > ctG.Level() {
-		eval.DropLevel(ctP, ctP.Level()-ctG.Level())
+	}
+	_, resolvedLTPostLevel, err := applyParallelLTLevelPolicy(eval, ctP, ctG, dropBeforeLT, ltDropLevel, ltPostLevel, deferLTPostRescale)
+	if err != nil {
+		return nil, tm, fmt.Errorf("ParallelLT level policy failed: %w", err)
 	}
 	U := buildPatersonStockmeyerMatrices(coeffsLower, r)
 	ctY, _, err := parallelLT3BSGSHoisted(params, eval, ctP, U, m, s, r)
 	if err != nil {
 		return nil, tm, fmt.Errorf("ParallelLT failed: %w", err)
 	}
+	if _, err := rescaleParallelLTOutputToPolicy(eval, ctY, resolvedLTPostLevel, "Post-ParallelLT normalization to ct2/grouped-powers level"); err != nil {
+		return nil, tm, fmt.Errorf("post-ParallelLT rescale failed: %w", err)
+	}
 	alignCiphertextLevels(eval, ctY, ctG)
-	alignCiphertextLevels(eval, ctY, ctG)
-	ctCollapsed, err := mulCtRelinRescale(eval, ctY, ctG)
+	logInputPairCheckpoint("Algorithm 5 line 5 inputs before Mult: c3/ct3=BatchLT output, c2/ct2=grouped powers", "c3", ctY, "c2", ctG)
+	ctCollapsed, deferredPointwiseRescaleLevel, err := alg5PointwiseMultiplyMaybeDeferred(eval, ctY, ctG, m, s)
 	if err != nil {
 		return nil, tm, fmt.Errorf("pointwise multiplication y*g failed: %w", err)
 	}
@@ -3460,7 +4799,10 @@ func polyEvalSparsePow2Alg5(params bfv.Parameters, eval *bfv.Evaluator, ct *rlwe
 	if err != nil {
 		return nil, tm, err
 	}
-	ctPowD, err := mulCtRelinRescale(eval, ctDHalf, ctDHalf)
+	if _, err := rescaleAfterAlg5RotateAndSumIfNeeded(eval, ctBase, deferredPointwiseRescaleLevel); err != nil {
+		return nil, tm, fmt.Errorf("deferred rescale after RotateAndSum failed: %w", err)
+	}
+	ctPowD, err := mulCtRelinRescaleNamed(eval, ctDHalf, ctDHalf, fmt.Sprintf("Leading term: ctPowD = (x^(d/2))^2 = x^d; d=%d", d))
 	if err != nil {
 		return nil, tm, fmt.Errorf("squaring x^(d/2) to x^d failed: %w", err)
 	}
@@ -3473,7 +4815,7 @@ func polyEvalSparsePow2Alg5(params bfv.Parameters, eval *bfv.Evaluator, ct *rlwe
 	return ctOut, tm, nil
 }
 
-func polyEvalSparsePow2Alg5LargeBranch(params bfv.Parameters, eval *bfv.Evaluator, ct *rlwe.Ciphertext, m int, coeffsLower [][]uint64, leadCoeffs []uint64, preLT *PreprocessedParallelLT3, dropBeforeLT bool, ltDropLevel, ltPostLevel int) (*rlwe.Ciphertext, PolyEvalTiming, error) {
+func polyEvalSparsePow2Alg5LargeBranch(params bfv.Parameters, eval *bfv.Evaluator, ct *rlwe.Ciphertext, m int, coeffsLower [][]uint64, leadCoeffs []uint64, preLT *PreprocessedParallelLT3, dropBeforeLT bool, ltDropLevel, ltPostLevel int, deferLTPostRescale bool) (*rlwe.Ciphertext, PolyEvalTiming, error) {
 	var tm PolyEvalTiming
 	start := time.Now()
 	progressf("poly eval (alg5-large): start")
@@ -3522,7 +4864,7 @@ func polyEvalSparsePow2Alg5LargeBranch(params bfv.Parameters, eval *bfv.Evaluato
 	}
 
 	progressf("poly eval (alg5-large): computing x^r")
-	ctR, err := mulCtRelinRescale(eval, ctHalf, ctHalf)
+	ctR, err := mulCtRelinRescaleNamed(eval, ctHalf, ctHalf, fmt.Sprintf("Algorithm 5 line 2: ctR = (x^(r/2))^2 = x^r; r=%d", r))
 	if err != nil {
 		return nil, tm, fmt.Errorf("squaring x^(r/2) to x^r failed: %w", err)
 	}
@@ -3540,9 +4882,9 @@ func polyEvalSparsePow2Alg5LargeBranch(params bfv.Parameters, eval *bfv.Evaluato
 	if ctDHalf == nil {
 		return nil, tm, errors.New("missing x^(d/2) ciphertext from the second power stage")
 	}
-	if traceEnabled {
+	if (traceEnabled || globalCt2NoiseProbe || mulTraceNoiseActive()) && len(base) > 0 {
 		xR := powVectorMod(base, r, mod)
-		if err := maybeTracePolyNoise("poly/LUT alg5-large: grouped powers of x^r", ctG, monomialGenReferenceSlots(xR, buildAllOnesCoeffs(m, s), r, mod)); err != nil {
+		if err := maybeTraceAndPrintImmediatePolyNoise("poly/LUT alg5-large: grouped powers of x^r", ctG, monomialGenReferenceSlots(xR, buildAllOnesCoeffs(m, s), r, mod), "Algorithm 5 line 3 output c2/ct2 grouped powers"); err != nil {
 			return nil, tm, err
 		}
 		if err := maybeTracePolyNoise("poly/LUT alg5-large: x^(d/2)", ctDHalf, repeatVector(powVectorMod(base, d/2, mod), r)); err != nil {
@@ -3550,12 +4892,9 @@ func polyEvalSparsePow2Alg5LargeBranch(params bfv.Parameters, eval *bfv.Evaluato
 		}
 	}
 
-	if ltDropLevel >= 0 {
-		if ctP.Level() > ltDropLevel {
-			eval.DropLevel(ctP, ctP.Level()-ltDropLevel)
-		}
-	} else if dropBeforeLT && ctP.Level() > ctG.Level() {
-		eval.DropLevel(ctP, ctP.Level()-ctG.Level())
+	_, resolvedLTPostLevel, err := applyParallelLTLevelPolicy(eval, ctP, ctG, dropBeforeLT, ltDropLevel, ltPostLevel, deferLTPostRescale)
+	if err != nil {
+		return nil, tm, fmt.Errorf("ParallelLT level policy failed: %w", err)
 	}
 
 	if preLT != nil {
@@ -3577,10 +4916,8 @@ func polyEvalSparsePow2Alg5LargeBranch(params bfv.Parameters, eval *bfv.Evaluato
 			return nil, tm, err
 		}
 	}
-	if ltPostLevel >= 0 && ctY.Level() > ltPostLevel {
-		if err := rescaleCiphertextToLevel(eval, ctY, ltPostLevel); err != nil {
-			return nil, tm, fmt.Errorf("post-ParallelLT rescale failed: %w", err)
-		}
+	if _, err := rescaleParallelLTOutputToPolicy(eval, ctY, resolvedLTPostLevel, "Post-ParallelLT normalization to ct2/grouped-powers level"); err != nil {
+		return nil, tm, fmt.Errorf("post-ParallelLT rescale failed: %w", err)
 	}
 	if traceEnabled {
 		if err := maybeTracePolyNoise("poly/LUT alg5-large: ParallelLT output (after post-rescale)", ctY, expectedAlg5LTSlots(base, coeffsLower, r, mod)); err != nil {
@@ -3590,7 +4927,9 @@ func polyEvalSparsePow2Alg5LargeBranch(params bfv.Parameters, eval *bfv.Evaluato
 
 	progressf("poly eval (alg5-large): multiplying ParallelLT output with grouped powers")
 	alignCiphertextLevels(eval, ctY, ctG)
-	ctCollapsed, err = mulCtRelinRescale(eval, ctY, ctG)
+	logInputPairCheckpoint("Algorithm 5 line 5 inputs before Mult: c3/ct3=BatchLT output, c2/ct2=grouped powers", "c3", ctY, "c2", ctG)
+	deferredPointwiseRescaleLevel := -1
+	ctCollapsed, deferredPointwiseRescaleLevel, err = alg5PointwiseMultiplyMaybeDeferred(eval, ctY, ctG, m, s)
 	if err != nil {
 		return nil, tm, fmt.Errorf("pointwise multiplication y*g failed: %w", err)
 	}
@@ -3605,6 +4944,9 @@ func polyEvalSparsePow2Alg5LargeBranch(params bfv.Parameters, eval *bfv.Evaluato
 	if err != nil {
 		return nil, tm, err
 	}
+	if _, err := rescaleAfterAlg5RotateAndSumIfNeeded(eval, ctBase, deferredPointwiseRescaleLevel); err != nil {
+		return nil, tm, fmt.Errorf("deferred rescale after RotateAndSum failed: %w", err)
+	}
 	if traceEnabled {
 		if err := maybeTracePolyNoise("poly/LUT alg5-large: lower polynomial after rotate-sum", ctBase, repeatVector(evaluatePolysPerSlot(base, coeffsLower, mod), r)); err != nil {
 			return nil, tm, err
@@ -3612,7 +4954,7 @@ func polyEvalSparsePow2Alg5LargeBranch(params bfv.Parameters, eval *bfv.Evaluato
 	}
 
 	progressf("poly eval (alg5-large): computing x^d")
-	ctPowD, err := mulCtRelinRescale(eval, ctDHalf, ctDHalf)
+	ctPowD, err := mulCtRelinRescaleNamed(eval, ctDHalf, ctDHalf, fmt.Sprintf("Leading term: ctPowD = (x^(d/2))^2 = x^d; d=%d", d))
 	if err != nil {
 		return nil, tm, fmt.Errorf("squaring x^(d/2) to x^d failed: %w", err)
 	}
@@ -3621,7 +4963,7 @@ func polyEvalSparsePow2Alg5LargeBranch(params bfv.Parameters, eval *bfv.Evaluato
 			return nil, tm, err
 		}
 	}
-	ctLead, err := mulPlainRescale(eval, ctPowD, sparsePackLeadingOrPanic(leadCoeffs, params.MaxSlots()))
+	ctLead, err := mulPlainRescaleNamed(eval, ctPowD, sparsePackLeadingOrPanic(leadCoeffs, params.MaxSlots()), "Leading term: ctLead = ctPowD * sparse leading-coefficient vector a_d")
 	if err != nil {
 		return nil, tm, fmt.Errorf("leading x^d plaintext-ciphertext multiplication failed: %w", err)
 	}
@@ -3893,14 +5235,13 @@ func addSlotToCoeffBSGSKeyUses(params bfv.Parameters, plan *RotationKeyPlan, n, 
 	for k := 1; k < g; k++ {
 		plan.AddColRotation(params, k, inputLevel, "SlotToCoeff baby")
 	}
-	giantLevel := inputLevel - 1
-	if giantLevel < 0 {
-		giantLevel = 0
-	}
+	// The current StC implementation accumulates the whole BSGS linear transform
+	// at the input level and only rescales after StC. Therefore both baby and
+	// giant rotations need keys at inputLevel.
 	for i := 1; i < b; i++ {
 		shift := i * g
 		if shift < n {
-			plan.AddColRotation(params, shift, giantLevel, "SlotToCoeff giant")
+			plan.AddColRotation(params, shift, inputLevel, "SlotToCoeff giant")
 		}
 	}
 	return nil
@@ -3940,10 +5281,10 @@ func addNeededGaloisElsAlg3KeyUsesAtLevel(params bfv.Parameters, plan *RotationK
 	return nil
 }
 
-func addPolyEvalRotationKeyUses(params bfv.Parameters, plan *RotationKeyPlan, m, d int, dropBeforeLT bool, ltDropLevel, ltPostLevel int, leadingTermEvaluated bool) (PolyRotationLevelInfo, error) {
-	info := PolyRotationLevelInfo{InputLevel: params.MaxLevel() - 1}
-	if info.InputLevel < 0 {
-		return info, fmt.Errorf("MaxLevel=%d is too small for post-packing polynomial input", params.MaxLevel())
+func addPolyEvalRotationKeyUses(params bfv.Parameters, plan *RotationKeyPlan, polyInputLevel, m, d int, dropBeforeLT bool, ltDropLevel, ltPostLevel int, deferLTPostRescale bool, leadingTermEvaluated bool) (PolyRotationLevelInfo, error) {
+	info := PolyRotationLevelInfo{InputLevel: polyInputLevel}
+	if info.InputLevel < 0 || info.InputLevel > params.MaxLevel() {
+		return info, fmt.Errorf("invalid polynomial input level L%d for MaxLevel=%d", info.InputLevel, params.MaxLevel())
 	}
 	if !isPow2(d) {
 		return info, fmt.Errorf("d=%d must be a power of two", d)
@@ -4005,13 +5346,9 @@ func addPolyEvalRotationKeyUses(params bfv.Parameters, plan *RotationKeyPlan, m,
 	info.PowerLevel = ctPLevel
 	info.GroupedLevel = ctGLevel
 
-	ltInputLevel := ctPLevel
-	if ltDropLevel >= 0 {
-		if ltInputLevel > ltDropLevel {
-			ltInputLevel = ltDropLevel
-		}
-	} else if dropBeforeLT && ltInputLevel > ctGLevel {
-		ltInputLevel = ctGLevel
+	ltInputLevel, ltOutputLevel, err := resolveParallelLTLevelPolicy(ctPLevel, ctGLevel, dropBeforeLT, ltDropLevel, ltPostLevel, deferLTPostRescale)
+	if err != nil {
+		return info, err
 	}
 	if err := checkPlannedLevel(ltInputLevel, "ParallelLT input"); err != nil {
 		return info, err
@@ -4020,18 +5357,21 @@ func addPolyEvalRotationKeyUses(params bfv.Parameters, plan *RotationKeyPlan, m,
 	if err := addNeededGaloisElsAlg3KeyUsesAtLevel(params, plan, m, s, r, ltInputLevel, "poly ParallelLT"); err != nil {
 		return info, err
 	}
-
-	ltOutputLevel := ltInputLevel
-	if ltPostLevel >= 0 && ltOutputLevel > ltPostLevel {
-		ltOutputLevel = ltPostLevel
+	if ltOutputLevel < 0 {
+		ltOutputLevel = ltInputLevel
 	}
 	info.LTOutputLevel = ltOutputLevel
-	collapsedLevel := minInt(ltOutputLevel, ctGLevel) - 1
+	collapseInputLevel := minInt(ltOutputLevel, ctGLevel)
+	collapsedLevel := collapseInputLevel - 1
 	if err := checkPlannedLevel(collapsedLevel, "post-ParallelLT collapsed ciphertext"); err != nil {
 		return info, err
 	}
-	info.FinalSumLevel = collapsedLevel
-	if err := addSparseRotateAndSumKeyUses(params, plan, m, s, collapsedLevel, "poly final rotate-sum"); err != nil {
+	finalSumLevel := collapsedLevel
+	if globalDeferPointwiseRescale {
+		finalSumLevel = collapseInputLevel
+	}
+	info.FinalSumLevel = finalSumLevel
+	if err := addSparseRotateAndSumKeyUses(params, plan, m, s, finalSumLevel, "poly final rotate-sum"); err != nil {
 		return info, err
 	}
 
@@ -4113,6 +5453,179 @@ func formatBytesIEC(n int64) string {
 		}
 	}
 	return fmt.Sprintf("%.2f PiB", value/float64(unit))
+}
+
+func plaintextLevel(pt *rlwe.Plaintext) int {
+	if pt == nil {
+		return -1
+	}
+	return len(pt.Value.Coeffs) - 1
+}
+
+func plaintextPayloadBytes(pt *rlwe.Plaintext) int64 {
+	if pt == nil {
+		return 0
+	}
+	var total int64
+	for _, coeffs := range pt.Value.Coeffs {
+		total += int64(len(coeffs)) * 8
+	}
+	return total
+}
+
+type PlaintextMemoryStat struct {
+	Category string
+	Level    int
+	Count    int
+	Bytes    int64
+}
+
+func addPlaintextMemoryStat(stats map[string]*PlaintextMemoryStat, category string, pt *rlwe.Plaintext) {
+	if pt == nil {
+		return
+	}
+	level := plaintextLevel(pt)
+	key := fmt.Sprintf("%s|%d", category, level)
+	st := stats[key]
+	if st == nil {
+		st = &PlaintextMemoryStat{Category: category, Level: level}
+		stats[key] = st
+	}
+	st.Count++
+	st.Bytes += plaintextPayloadBytes(pt)
+}
+
+func collectMonomialPlaintextMemoryStats(stats map[string]*PlaintextMemoryStat, category string, pre *PreprocessedMonomial) {
+	if pre == nil {
+		return
+	}
+	addPlaintextMemoryStat(stats, category, pre.FirstMaskPT)
+	for _, pt := range pre.CMaskPT {
+		addPlaintextMemoryStat(stats, category, pt)
+	}
+}
+
+func collectParallelLT2PlaintextMemoryStats(stats map[string]*PlaintextMemoryStat, category string, pre *PreprocessedParallelLT2) {
+	if pre == nil {
+		return
+	}
+	for _, pt := range pre.ShiftedMaskPT {
+		addPlaintextMemoryStat(stats, category, pt)
+	}
+}
+
+func collectParallelLT3PlaintextMemoryStats(stats map[string]*PlaintextMemoryStat, category string, pre *PreprocessedParallelLT3) {
+	if pre == nil {
+		return
+	}
+	collectParallelLT2PlaintextMemoryStats(stats, category, pre.Pre1)
+	collectParallelLT2PlaintextMemoryStats(stats, category, pre.Pre2)
+}
+
+func collectPolyPrecomputePlaintextMemoryStats(pre *PreprocessedPolyEval) []PlaintextMemoryStat {
+	if pre == nil {
+		return nil
+	}
+	stats := make(map[string]*PlaintextMemoryStat)
+	addPlaintextMemoryStat(stats, "leading coefficient", pre.LeadPT)
+	collectMonomialPlaintextMemoryStats(stats, "monomial lower", pre.LowerMon)
+	collectMonomialPlaintextMemoryStats(stats, "monomial basis/r", pre.OnesRMon)
+	collectMonomialPlaintextMemoryStats(stats, "monomial grouped/s", pre.OnesSMon)
+	collectParallelLT3PlaintextMemoryStats(stats, "ParallelLT masks", pre.LT)
+	out := make([]PlaintextMemoryStat, 0, len(stats))
+	for _, st := range stats {
+		out = append(out, *st)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Category != out[j].Category {
+			return out[i].Category < out[j].Category
+		}
+		return out[i].Level < out[j].Level
+	})
+	return out
+}
+
+func printPolyPrecomputePlaintextMemorySummary(params bfv.Parameters, pre *PreprocessedPolyEval) {
+	if pre == nil {
+		return
+	}
+	stats := collectPolyPrecomputePlaintextMemoryStats(pre)
+	var totalBytes int64
+	var totalCount int
+	for _, st := range stats {
+		totalBytes += st.Bytes
+		totalCount += st.Count
+	}
+	fmt.Printf("precomputed plaintext mode : %s\n", pre.Mode)
+	fmt.Printf("precompute level plan      : input L%d", pre.InputLevel)
+	if pre.CT1Level >= 0 || pre.CT2Level >= 0 || pre.LTLevel >= 0 {
+		fmt.Printf(", ct1/ctP L%d, ct2 L%d, BatchLT L%d", pre.CT1Level, pre.CT2Level, pre.LTLevel)
+		if pre.LTPostLevel >= 0 {
+			fmt.Printf(" -> post-LT L%d", pre.LTPostLevel)
+		} else {
+			fmt.Printf(" -> post-LT disabled")
+		}
+	}
+	if pre.LeadPT != nil {
+		fmt.Printf(", lead L%d", pre.LeadLevel)
+	}
+	fmt.Println()
+	fmt.Printf("precomputed plaintext mem  : %s coefficient payload over %d plaintext(s)\n", formatBytesIEC(totalBytes), totalCount)
+	if len(stats) == 0 {
+		return
+	}
+	rows := make([][]string, 0, len(stats))
+	for _, st := range stats {
+		logQ := "-"
+		if st.Level >= 0 && st.Level <= params.MaxLevel() {
+			logQ = fmt.Sprintf("%d", qBitsOfLevel(params, st.Level))
+		}
+		rows = append(rows, []string{
+			st.Category,
+			fmt.Sprintf("L%d", st.Level),
+			logQ,
+			fmt.Sprintf("%d", st.Count),
+			formatBytesIEC(st.Bytes),
+		})
+	}
+	printAlignedPipeTable(
+		[]string{"plaintext group", "LevelQ", "logQ", "count", "payload memory"},
+		rows,
+		[]bool{false, true, true, true, true},
+	)
+}
+
+func printEvaluationKeyLevelSummary(params bfv.Parameters, relinLevel int, relinSizeBytes int64, rotationStats []RotationKeyLevelStat, totalEvalKeyBytes int64, levelAware bool) {
+	policy := "level-aware"
+	if !levelAware {
+		policy = "full-chain"
+	}
+	fmt.Printf("evaluation key policy      : %s Q-level generation\n", policy)
+	rows := make([][]string, 0, 1+len(rotationStats)+1)
+	if relinLevel >= 0 {
+		rows = append(rows, []string{
+			"Relinearization",
+			fmt.Sprintf("L%d", relinLevel),
+			fmt.Sprintf("%d", qBitsOfLevel(params, relinLevel)),
+			"1",
+			formatBytesIEC(relinSizeBytes),
+		})
+	}
+	for _, st := range rotationStats {
+		rows = append(rows, []string{
+			"Galois/rotation",
+			fmt.Sprintf("L%d", st.LevelQ),
+			fmt.Sprintf("%d", st.LogQBits),
+			fmt.Sprintf("%d", st.Count),
+			formatBytesIEC(st.SizeBytes),
+		})
+	}
+	rows = append(rows, []string{"Total eval keys", "-", "-", "-", formatBytesIEC(totalEvalKeyBytes)})
+	printAlignedPipeTable(
+		[]string{"key type", "LevelQ", "logQ", "count", "size"},
+		rows,
+		[]bool{false, true, true, true, true},
+	)
 }
 
 func printGoMemStats(label string) {
@@ -4200,7 +5713,7 @@ func evalSinglePolyVector(base []uint64, coeff []uint64, mod uint64) []uint64 {
 	return out
 }
 
-func polyEvalSparsePow2Alg5Precomp(params bfv.Parameters, eval *bfv.Evaluator, ct *rlwe.Ciphertext, pre *PreprocessedPolyEval, dropBeforeLT bool, ltDropLevel, ltPostLevel int) (*rlwe.Ciphertext, PolyEvalTiming, error) {
+func polyEvalSparsePow2Alg5Precomp(params bfv.Parameters, eval *bfv.Evaluator, ct *rlwe.Ciphertext, pre *PreprocessedPolyEval, dropBeforeLT bool, ltDropLevel, ltPostLevel int, deferLTPostRescale bool) (*rlwe.Ciphertext, PolyEvalTiming, error) {
 	var tm PolyEvalTiming
 	start := time.Now()
 	progressf("poly eval (alg5): start")
@@ -4231,7 +5744,7 @@ func polyEvalSparsePow2Alg5Precomp(params bfv.Parameters, eval *bfv.Evaluator, c
 		}
 	}
 	progressf("poly eval (alg5): computing x^r")
-	ctR, err := mulCtRelinRescale(eval, ctHalf, ctHalf)
+	ctR, err := mulCtRelinRescaleNamed(eval, ctHalf, ctHalf, fmt.Sprintf("Algorithm 5 line 2: ctR = (x^(r/2))^2 = x^r; r=%d", r))
 	if err != nil {
 		return nil, tm, fmt.Errorf("squaring x^(r/2) to x^r failed: %w", err)
 	}
@@ -4248,21 +5761,18 @@ func polyEvalSparsePow2Alg5Precomp(params bfv.Parameters, eval *bfv.Evaluator, c
 	if ctDHalf == nil {
 		return nil, tm, errors.New("missing x^(d/2) ciphertext from the second power stage")
 	}
-	if traceEnabled {
+	if (traceEnabled || globalCt2NoiseProbe || mulTraceNoiseActive()) && len(base) > 0 {
 		xR := powVectorMod(base, r, mod)
-		if err := maybeTracePolyNoise("poly/LUT alg5: grouped powers of x^r", ctG, monomialGenReferenceSlots(xR, buildAllOnesCoeffs(pre.M, s), r, mod)); err != nil {
+		if err := maybeTraceAndPrintImmediatePolyNoise("poly/LUT alg5: grouped powers of x^r", ctG, monomialGenReferenceSlots(xR, buildAllOnesCoeffs(pre.M, s), r, mod), "Algorithm 5 line 3 output c2/ct2 grouped powers"); err != nil {
 			return nil, tm, err
 		}
 		if err := maybeTracePolyNoise("poly/LUT alg5: x^(d/2)", ctDHalf, repeatVector(powVectorMod(base, pre.D/2, mod), r)); err != nil {
 			return nil, tm, err
 		}
 	}
-	if ltDropLevel >= 0 {
-		if ctP.Level() > ltDropLevel {
-			eval.DropLevel(ctP, ctP.Level()-ltDropLevel)
-		}
-	} else if dropBeforeLT && ctP.Level() > ctG.Level() {
-		eval.DropLevel(ctP, ctP.Level()-ctG.Level())
+	_, resolvedLTPostLevel, err := applyParallelLTLevelPolicy(eval, ctP, ctG, dropBeforeLT, ltDropLevel, ltPostLevel, deferLTPostRescale)
+	if err != nil {
+		return nil, tm, fmt.Errorf("ParallelLT level policy failed: %w", err)
 	}
 	progressf("poly eval (alg5): running ParallelLT")
 	ctY, _, err := parallelLT3BSGSHoistedPrecomp(params, eval, ctP, pre.LT, pre.M, s, r)
@@ -4274,10 +5784,8 @@ func polyEvalSparsePow2Alg5Precomp(params bfv.Parameters, eval *bfv.Evaluator, c
 			return nil, tm, err
 		}
 	}
-	if ltPostLevel >= 0 && ctY.Level() > ltPostLevel {
-		if err := rescaleCiphertextToLevel(eval, ctY, ltPostLevel); err != nil {
-			return nil, tm, fmt.Errorf("post-ParallelLT rescale failed: %w", err)
-		}
+	if _, err := rescaleParallelLTOutputToPolicy(eval, ctY, resolvedLTPostLevel, "Post-ParallelLT normalization to ct2/grouped-powers level"); err != nil {
+		return nil, tm, fmt.Errorf("post-ParallelLT rescale failed: %w", err)
 	}
 	if traceEnabled {
 		if err := maybeTracePolyNoise("poly/LUT alg5: ParallelLT output (after post-rescale)", ctY, expectedAlg5LTSlots(base, coeffsLower, r, mod)); err != nil {
@@ -4285,8 +5793,9 @@ func polyEvalSparsePow2Alg5Precomp(params bfv.Parameters, eval *bfv.Evaluator, c
 		}
 	}
 	alignCiphertextLevels(eval, ctY, ctG)
+	logInputPairCheckpoint("Algorithm 5 line 5 inputs before Mult: c3/ct3=BatchLT output, c2/ct2=grouped powers", "c3", ctY, "c2", ctG)
 	progressf("poly eval (alg5): multiplying ParallelLT output with grouped powers")
-	ctCollapsed, err := mulCtRelinRescale(eval, ctY, ctG)
+	ctCollapsed, deferredPointwiseRescaleLevel, err := alg5PointwiseMultiplyMaybeDeferred(eval, ctY, ctG, pre.M, s)
 	if err != nil {
 		return nil, tm, fmt.Errorf("pointwise multiplication y*g failed: %w", err)
 	}
@@ -4300,13 +5809,16 @@ func polyEvalSparsePow2Alg5Precomp(params bfv.Parameters, eval *bfv.Evaluator, c
 	if err != nil {
 		return nil, tm, err
 	}
+	if _, err := rescaleAfterAlg5RotateAndSumIfNeeded(eval, ctBase, deferredPointwiseRescaleLevel); err != nil {
+		return nil, tm, fmt.Errorf("deferred rescale after RotateAndSum failed: %w", err)
+	}
 	if traceEnabled {
 		if err := maybeTracePolyNoise("poly/LUT alg5: lower polynomial after rotate-sum", ctBase, repeatVector(evaluatePolysPerSlot(base, coeffsLower, mod), r)); err != nil {
 			return nil, tm, err
 		}
 	}
 	progressf("poly eval (alg5): computing x^d")
-	ctPowD, err := mulCtRelinRescale(eval, ctDHalf, ctDHalf)
+	ctPowD, err := mulCtRelinRescaleNamed(eval, ctDHalf, ctDHalf, fmt.Sprintf("Leading term: ctPowD = (x^(d/2))^2 = x^d; d=%d", pre.D))
 	if err != nil {
 		return nil, tm, fmt.Errorf("squaring x^(d/2) to x^d failed: %w", err)
 	}
@@ -4315,7 +5827,7 @@ func polyEvalSparsePow2Alg5Precomp(params bfv.Parameters, eval *bfv.Evaluator, c
 			return nil, tm, err
 		}
 	}
-	ctLead, err := mulOperandRescale(eval, ctPowD, pre.LeadPT)
+	ctLead, err := mulOperandRescaleNamedWithPlain(eval, ctPowD, pre.LeadPT, pre.LeadVec, "Leading term: ctLead = ctPowD * precomputed leading-coefficient plaintext a_d")
 	if err != nil {
 		return nil, tm, fmt.Errorf("leading x^d plaintext-ciphertext multiplication failed: %w", err)
 	}
@@ -4364,6 +5876,7 @@ type NoiseProbeResult struct {
 	MaxCoeffNoiseAbs        string
 	RequiredBitsNoMargin    int
 	RecommendedBits         int
+	NoiseBudgetBits         int
 	SmallestSafeLevel       int
 	SmallestSafeLogQBits    int
 	SafeDropLevelsWithGuard int
@@ -4439,10 +5952,77 @@ func probeCipherNoiseAgainstSlots(params bfv.Parameters, encoder *bfv.Encoder, d
 		Level:                   ct.Level(),
 		CurrentLogQBits:         currentBits,
 		NextLogQBits:            nextBits,
-		ScaleModT:               ct.Scale.Uint64() % params.PlaintextModulus(),
+		ScaleModT:               scaleModUint64(ct.Scale, params.PlaintextModulus()),
 		MaxCoeffNoiseAbs:        maxAbs.String(),
 		RequiredBitsNoMargin:    noMargin,
 		RecommendedBits:         recommended,
+		NoiseBudgetBits:         currentBits - noMargin,
+		SmallestSafeLevel:       smallestSafeLevel,
+		SmallestSafeLogQBits:    smallestSafeBits,
+		SafeDropLevelsWithGuard: safeDropLevels,
+	}, nil
+}
+
+func probeCipherNoiseAgainstCoeffs(params bfv.Parameters, encoder *bfv.Encoder, dec *rlwe.Decryptor, ct *rlwe.Ciphertext, expectedCoeffs []uint64, safetyBits int, name string) (*NoiseProbeResult, error) {
+	ptGot := dec.DecryptNew(ct)
+	ptRef := bfv.NewPlaintext(params, ct.Level())
+	ptRef.Scale = ct.Scale
+	ptRef.IsBatched = false
+	coeffs := make([]uint64, params.N())
+	for i := range coeffs {
+		if i < len(expectedCoeffs) {
+			coeffs[i] = expectedCoeffs[i] % params.PlaintextModulus()
+		}
+	}
+	if err := encoder.Encode(coeffs, ptRef); err != nil {
+		return nil, fmt.Errorf("failed to encode expected coefficient plaintext for probe %q: %w", name, err)
+	}
+	ringQ := params.RingQ().AtLevel(ct.Level())
+	bigQ := ringQ.Modulus()
+	gotBig := polyToBigintCentered(ringQ, ptGot.Value, ptGot.IsNTT, ptGot.IsMontgomery)
+	refBig := polyToBigintCentered(ringQ, ptRef.Value, ptRef.IsNTT, ptRef.IsMontgomery)
+	maxAbs := big.NewInt(0)
+	for i := range gotBig {
+		diff := centeredModBig(new(big.Int).Sub(gotBig[i], refBig[i]), bigQ)
+		if diff.Sign() < 0 {
+			diff.Neg(diff)
+		}
+		if diff.Cmp(maxAbs) > 0 {
+			maxAbs.Set(diff)
+		}
+	}
+	noMargin, recommended := estimateResidualBitsFromNoise(maxAbs, params.PlaintextModulus(), safetyBits)
+	currentBits := bigQ.BitLen()
+	nextBits := -1
+	if ct.Level() > 0 {
+		nextBits = params.RingQ().AtLevel(ct.Level() - 1).Modulus().BitLen()
+	}
+	smallestSafeLevel := -1
+	smallestSafeBits := -1
+	if recommended <= currentBits {
+		for lvl := 0; lvl <= ct.Level(); lvl++ {
+			bits := params.RingQ().AtLevel(lvl).Modulus().BitLen()
+			if bits >= recommended {
+				smallestSafeLevel = lvl
+				smallestSafeBits = bits
+				break
+			}
+		}
+	}
+	safeDropLevels := 0
+	if smallestSafeLevel >= 0 {
+		safeDropLevels = ct.Level() - smallestSafeLevel
+	}
+	return &NoiseProbeResult{
+		Name:                    name,
+		Level:                   ct.Level(),
+		CurrentLogQBits:         currentBits,
+		NextLogQBits:            nextBits,
+		ScaleModT:               scaleModUint64(ct.Scale, params.PlaintextModulus()),
+		MaxCoeffNoiseAbs:        maxAbs.String(),
+		RequiredBitsNoMargin:    noMargin,
+		RecommendedBits:         recommended,
+		NoiseBudgetBits:         currentBits - noMargin,
 		SmallestSafeLevel:       smallestSafeLevel,
 		SmallestSafeLogQBits:    smallestSafeBits,
 		SafeDropLevelsWithGuard: safeDropLevels,
@@ -4463,6 +6043,7 @@ func printNoiseProbeResult(p *NoiseProbeResult) {
 	}
 	fmt.Printf("  scale mod T              : %d\n", p.ScaleModT)
 	fmt.Printf("  max coeff noise abs      : %s\n", p.MaxCoeffNoiseAbs)
+	fmt.Printf("  coefficient noise budget : %d bits\n", p.NoiseBudgetBits)
 	fmt.Printf("  min residual logQ (raw)  : %d\n", p.RequiredBitsNoMargin)
 	fmt.Printf("  min residual logQ (safe) : %d\n", p.RecommendedBits)
 	if p.SmallestSafeLevel >= 0 {
@@ -4494,6 +6075,7 @@ type BenchPolyEvalBreakdown struct {
 	ComputeXD            time.Duration
 	LeadingTerm          time.Duration
 	FinalAdd             time.Duration
+	FinalRescale         time.Duration
 	PowerGen             time.Duration
 	OuterCombine         time.Duration
 }
@@ -4505,11 +6087,12 @@ type BenchPolyEvalTiming struct {
 }
 
 type BenchDynamicSetupTiming struct {
-	FunctionTable  time.Duration
-	LUTBuild       time.Duration
-	LWECiphertexts time.Duration
-	PolyPrecompute time.Duration
-	Total          time.Duration
+	FunctionTable      time.Duration
+	LUTBuild           time.Duration
+	LWECiphertexts     time.Duration
+	PolyPrecompute     time.Duration
+	M1GammaCalibration time.Duration
+	Total              time.Duration
 }
 
 type BenchOnlineTiming struct {
@@ -4524,22 +6107,27 @@ type BenchOnlineTiming struct {
 }
 
 type BenchRunSummary struct {
-	Run          int
-	FuncSeed     int64
-	LWENoiseSeed int64
-	LWEASeed     int64
-	MsgSeed      int64
-	FuncDesc     string
-	Dynamic      BenchDynamicSetupTiming
-	Online       BenchOnlineTiming
-	NoiseDiffs   []int64
-	NoiseMean    float64
-	NoiseStd     float64
-	NoiseMaxAbs  int64
-	PolyPlainOK  bool
-	CoeffOK      bool
-	DecodeOK     bool
-	Correct      bool
+	Run           int
+	FuncSeed      int64
+	LWENoiseSeed  int64
+	LWEASeed      int64
+	MsgSeed       int64
+	FuncDesc      string
+	Dynamic       BenchDynamicSetupTiming
+	Online        BenchOnlineTiming
+	Wall          time.Duration
+	NoiseDiffs    []int64
+	NoiseMean     float64
+	NoiseStd      float64
+	NoiseMaxAbs   int64
+	QBeforeDiffs  []int64
+	QAfterDiffs   []int64
+	QKSDiffs      []int64
+	QExtractDiffs []int64
+	PolyPlainOK   bool
+	CoeffOK       bool
+	DecodeOK      bool
+	Correct       bool
 }
 
 func polyNoiseTraceActiveForCurrentContext(m int) bool {
@@ -4663,7 +6251,7 @@ func buildFunctionTableWithSeed(p uint64, funcSpec, inlineTable, filePath string
 	return tab, desc, nil
 }
 
-func benchPolyEvalSparsePow2Alg5Precomp(params bfv.Parameters, eval *bfv.Evaluator, ct *rlwe.Ciphertext, pre *PreprocessedPolyEval, dropBeforeLT bool, ltDropLevel, ltPostLevel int) (*rlwe.Ciphertext, BenchPolyEvalTiming, error) {
+func benchPolyEvalSparsePow2Alg5Precomp(params bfv.Parameters, eval *bfv.Evaluator, ct *rlwe.Ciphertext, pre *PreprocessedPolyEval, dropBeforeLT bool, ltDropLevel, ltPostLevel int, deferLTPostRescale bool) (*rlwe.Ciphertext, BenchPolyEvalTiming, error) {
 	var tm BenchPolyEvalTiming
 	start := time.Now()
 	if pre == nil || pre.OnesRMon == nil || pre.OnesSMon == nil || pre.LT == nil || pre.LeadPT == nil {
@@ -4696,7 +6284,7 @@ func benchPolyEvalSparsePow2Alg5Precomp(params bfv.Parameters, eval *bfv.Evaluat
 	}
 
 	st = time.Now()
-	ctR, err := mulCtRelinRescale(eval, ctHalf, ctHalf)
+	ctR, err := mulCtRelinRescaleNamed(eval, ctHalf, ctHalf, fmt.Sprintf("Algorithm 5 line 2: ctR = (x^(r/2))^2 = x^r; r=%d", r))
 	if err != nil {
 		return nil, tm, fmt.Errorf("squaring x^(r/2) to x^r failed: %w", err)
 	}
@@ -4716,9 +6304,9 @@ func benchPolyEvalSparsePow2Alg5Precomp(params bfv.Parameters, eval *bfv.Evaluat
 		return nil, tm, errors.New("missing x^(d/2) ciphertext from the second power stage")
 	}
 	tm.Breakdown.BuildGrouped = time.Since(st)
-	if traceEnabled {
+	if (traceEnabled || globalCt2NoiseProbe || mulTraceNoiseActive()) && len(base) > 0 {
 		xR := powVectorMod(base, r, mod)
-		if err := maybeTracePolyNoise("poly/LUT alg5: grouped powers of x^r", ctG, monomialGenReferenceSlots(xR, buildAllOnesCoeffs(pre.M, s), r, mod)); err != nil {
+		if err := maybeTraceAndPrintImmediatePolyNoise("poly/LUT alg5: grouped powers of x^r", ctG, monomialGenReferenceSlots(xR, buildAllOnesCoeffs(pre.M, s), r, mod), "Algorithm 5 line 3 output c2/ct2 grouped powers"); err != nil {
 			return nil, tm, err
 		}
 		if err := maybeTracePolyNoise("poly/LUT alg5: x^(d/2)", ctDHalf, repeatVector(powVectorMod(base, pre.D/2, mod), r)); err != nil {
@@ -4726,16 +6314,14 @@ func benchPolyEvalSparsePow2Alg5Precomp(params bfv.Parameters, eval *bfv.Evaluat
 		}
 	}
 
-	if ltDropLevel >= 0 {
-		if ctP.Level() > ltDropLevel {
-			eval.DropLevel(ctP, ctP.Level()-ltDropLevel)
-		}
-	} else if dropBeforeLT && ctP.Level() > ctG.Level() {
-		eval.DropLevel(ctP, ctP.Level()-ctG.Level())
+	_, resolvedLTPostLevel, err := applyParallelLTLevelPolicy(eval, ctP, ctG, dropBeforeLT, ltDropLevel, ltPostLevel, deferLTPostRescale)
+	if err != nil {
+		return nil, tm, fmt.Errorf("ParallelLT level policy failed: %w", err)
 	}
 
 	ltStart := time.Now()
 	ctY, ltTiming, err := parallelLT3BSGSHoistedPrecomp(params, eval, ctP, pre.LT, pre.M, s, r)
+	ltCoreDuration := time.Since(ltStart)
 	if err != nil {
 		return nil, tm, fmt.Errorf("ParallelLT failed: %w", err)
 	}
@@ -4745,23 +6331,21 @@ func benchPolyEvalSparsePow2Alg5Precomp(params bfv.Parameters, eval *bfv.Evaluat
 		}
 	}
 	var ltPostRescale time.Duration
-	if ltPostLevel >= 0 && ctY.Level() > ltPostLevel {
-		stRes := time.Now()
-		if err := rescaleCiphertextToLevel(eval, ctY, ltPostLevel); err != nil {
-			return nil, tm, fmt.Errorf("post-ParallelLT rescale failed: %w", err)
-		}
-		ltPostRescale = time.Since(stRes)
+	ltPostRescale, err = rescaleParallelLTOutputToPolicy(eval, ctY, resolvedLTPostLevel, "Post-ParallelLT normalization to ct2/grouped-powers level")
+	if err != nil {
+		return nil, tm, fmt.Errorf("post-ParallelLT rescale failed: %w", err)
 	}
 	if traceEnabled {
 		if err := maybeTracePolyNoise("poly/LUT alg5: ParallelLT output (after post-rescale)", ctY, expectedAlg5LTSlots(base, coeffsLower, r, mod)); err != nil {
 			return nil, tm, err
 		}
 	}
-	setBenchLTBreakdown(&tm.Breakdown, time.Since(ltStart), 0, ltPostRescale, ltTiming)
+	setBenchLTBreakdown(&tm.Breakdown, ltCoreDuration+ltPostRescale, 0, ltPostRescale, ltTiming)
 
 	st = time.Now()
 	alignCiphertextLevels(eval, ctY, ctG)
-	ctCollapsed, err := mulCtRelinRescale(eval, ctY, ctG)
+	logInputPairCheckpoint("Algorithm 5 line 5 inputs before Mult: c3/ct3=BatchLT output, c2/ct2=grouped powers", "c3", ctY, "c2", ctG)
+	ctCollapsed, deferredPointwiseRescaleLevel, err := alg5PointwiseMultiplyMaybeDeferred(eval, ctY, ctG, pre.M, s)
 	if err != nil {
 		return nil, tm, fmt.Errorf("pointwise multiplication y*g failed: %w", err)
 	}
@@ -4778,6 +6362,11 @@ func benchPolyEvalSparsePow2Alg5Precomp(params bfv.Parameters, eval *bfv.Evaluat
 		return nil, tm, err
 	}
 	tm.Breakdown.RotateAndSum = time.Since(st)
+	if dur, err := rescaleAfterAlg5RotateAndSumIfNeeded(eval, ctBase, deferredPointwiseRescaleLevel); err != nil {
+		return nil, tm, fmt.Errorf("deferred rescale after RotateAndSum failed: %w", err)
+	} else {
+		tm.Breakdown.FinalRescale += dur
+	}
 	if traceEnabled {
 		if err := maybeTracePolyNoise("poly/LUT alg5: lower polynomial after rotate-sum", ctBase, repeatVector(evaluatePolysPerSlot(base, coeffsLower, mod), r)); err != nil {
 			return nil, tm, err
@@ -4785,7 +6374,7 @@ func benchPolyEvalSparsePow2Alg5Precomp(params bfv.Parameters, eval *bfv.Evaluat
 	}
 
 	st = time.Now()
-	ctPowD, err := mulCtRelinRescale(eval, ctDHalf, ctDHalf)
+	ctPowD, err := mulCtRelinRescaleNamed(eval, ctDHalf, ctDHalf, fmt.Sprintf("Leading term: ctPowD = (x^(d/2))^2 = x^d; d=%d", pre.D))
 	if err != nil {
 		return nil, tm, fmt.Errorf("squaring x^(d/2) to x^d failed: %w", err)
 	}
@@ -4797,7 +6386,7 @@ func benchPolyEvalSparsePow2Alg5Precomp(params bfv.Parameters, eval *bfv.Evaluat
 	}
 
 	st = time.Now()
-	ctLead, err := mulOperandRescale(eval, ctPowD, pre.LeadPT)
+	ctLead, err := mulOperandRescaleNamedWithPlain(eval, ctPowD, pre.LeadPT, pre.LeadVec, "Leading term: ctLead = ctPowD * precomputed leading-coefficient plaintext a_d")
 	if err != nil {
 		return nil, tm, fmt.Errorf("leading x^d plaintext-ciphertext multiplication failed: %w", err)
 	}
@@ -4831,7 +6420,7 @@ func benchPolyEvalSparsePow2Alg5Precomp(params bfv.Parameters, eval *bfv.Evaluat
 	return ctOut, tm, nil
 }
 
-func benchPolyEvalSparsePow2Alg5LargeBranch(params bfv.Parameters, eval *bfv.Evaluator, ct *rlwe.Ciphertext, m int, coeffsLower [][]uint64, leadCoeffs []uint64, preLT *PreprocessedParallelLT3, dropBeforeLT bool, ltDropLevel, ltPostLevel int) (*rlwe.Ciphertext, BenchPolyEvalTiming, error) {
+func benchPolyEvalSparsePow2Alg5LargeBranch(params bfv.Parameters, eval *bfv.Evaluator, ct *rlwe.Ciphertext, m int, coeffsLower [][]uint64, leadCoeffs []uint64, preLT *PreprocessedParallelLT3, dropBeforeLT bool, ltDropLevel, ltPostLevel int, deferLTPostRescale bool) (*rlwe.Ciphertext, BenchPolyEvalTiming, error) {
 	var tm BenchPolyEvalTiming
 	start := time.Now()
 	if len(coeffsLower) == 0 || len(coeffsLower[0]) == 0 {
@@ -4879,7 +6468,7 @@ func benchPolyEvalSparsePow2Alg5LargeBranch(params bfv.Parameters, eval *bfv.Eva
 	}
 
 	st = time.Now()
-	ctR, err := mulCtRelinRescale(eval, ctHalf, ctHalf)
+	ctR, err := mulCtRelinRescaleNamed(eval, ctHalf, ctHalf, fmt.Sprintf("Algorithm 5 line 2: ctR = (x^(r/2))^2 = x^r; r=%d", r))
 	if err != nil {
 		return nil, tm, fmt.Errorf("squaring x^(r/2) to x^r failed: %w", err)
 	}
@@ -4899,9 +6488,9 @@ func benchPolyEvalSparsePow2Alg5LargeBranch(params bfv.Parameters, eval *bfv.Eva
 		return nil, tm, errors.New("missing x^(d/2) ciphertext from the second power stage")
 	}
 	tm.Breakdown.BuildGrouped = time.Since(st)
-	if traceEnabled {
+	if (traceEnabled || globalCt2NoiseProbe || mulTraceNoiseActive()) && len(base) > 0 {
 		xR := powVectorMod(base, r, mod)
-		if err := maybeTracePolyNoise("poly/LUT alg5-large: grouped powers of x^r", ctG, monomialGenReferenceSlots(xR, buildAllOnesCoeffs(m, s), r, mod)); err != nil {
+		if err := maybeTraceAndPrintImmediatePolyNoise("poly/LUT alg5-large: grouped powers of x^r", ctG, monomialGenReferenceSlots(xR, buildAllOnesCoeffs(m, s), r, mod), "Algorithm 5 line 3 output c2/ct2 grouped powers"); err != nil {
 			return nil, tm, err
 		}
 		if err := maybeTracePolyNoise("poly/LUT alg5-large: x^(d/2)", ctDHalf, repeatVector(powVectorMod(base, d/2, mod), r)); err != nil {
@@ -4909,12 +6498,9 @@ func benchPolyEvalSparsePow2Alg5LargeBranch(params bfv.Parameters, eval *bfv.Eva
 		}
 	}
 
-	if ltDropLevel >= 0 {
-		if ctP.Level() > ltDropLevel {
-			eval.DropLevel(ctP, ctP.Level()-ltDropLevel)
-		}
-	} else if dropBeforeLT && ctP.Level() > ctG.Level() {
-		eval.DropLevel(ctP, ctP.Level()-ctG.Level())
+	_, resolvedLTPostLevel, err := applyParallelLTLevelPolicy(eval, ctP, ctG, dropBeforeLT, ltDropLevel, ltPostLevel, deferLTPostRescale)
+	if err != nil {
+		return nil, tm, fmt.Errorf("ParallelLT level policy failed: %w", err)
 	}
 
 	var ctY *rlwe.Ciphertext
@@ -4929,6 +6515,7 @@ func benchPolyEvalSparsePow2Alg5LargeBranch(params bfv.Parameters, eval *bfv.Eva
 		ltMatrixBuild = time.Since(stMatrix)
 		ctY, ltTiming, err = parallelLT3BSGSHoistedViews(params, eval, ctP, U, m, s, r)
 	}
+	ltCoreDuration := time.Since(ltStart)
 	if err != nil {
 		return nil, tm, fmt.Errorf("ParallelLT failed: %w", err)
 	}
@@ -4937,23 +6524,21 @@ func benchPolyEvalSparsePow2Alg5LargeBranch(params bfv.Parameters, eval *bfv.Eva
 			return nil, tm, err
 		}
 	}
-	if ltPostLevel >= 0 && ctY.Level() > ltPostLevel {
-		stRes := time.Now()
-		if err := rescaleCiphertextToLevel(eval, ctY, ltPostLevel); err != nil {
-			return nil, tm, fmt.Errorf("post-ParallelLT rescale failed: %w", err)
-		}
-		ltPostRescale = time.Since(stRes)
+	ltPostRescale, err = rescaleParallelLTOutputToPolicy(eval, ctY, resolvedLTPostLevel, "Post-ParallelLT normalization to ct2/grouped-powers level")
+	if err != nil {
+		return nil, tm, fmt.Errorf("post-ParallelLT rescale failed: %w", err)
 	}
 	if traceEnabled {
 		if err := maybeTracePolyNoise("poly/LUT alg5-large: ParallelLT output (after post-rescale)", ctY, expectedAlg5LTSlots(base, coeffsLower, r, mod)); err != nil {
 			return nil, tm, err
 		}
 	}
-	setBenchLTBreakdown(&tm.Breakdown, time.Since(ltStart), ltMatrixBuild, ltPostRescale, ltTiming)
+	setBenchLTBreakdown(&tm.Breakdown, ltCoreDuration+ltPostRescale, ltMatrixBuild, ltPostRescale, ltTiming)
 
 	st = time.Now()
 	alignCiphertextLevels(eval, ctY, ctG)
-	ctCollapsed, err := mulCtRelinRescale(eval, ctY, ctG)
+	logInputPairCheckpoint("Algorithm 5 line 5 inputs before Mult: c3/ct3=BatchLT output, c2/ct2=grouped powers", "c3", ctY, "c2", ctG)
+	ctCollapsed, deferredPointwiseRescaleLevel, err := alg5PointwiseMultiplyMaybeDeferred(eval, ctY, ctG, m, s)
 	if err != nil {
 		return nil, tm, fmt.Errorf("pointwise multiplication y*g failed: %w", err)
 	}
@@ -4970,6 +6555,11 @@ func benchPolyEvalSparsePow2Alg5LargeBranch(params bfv.Parameters, eval *bfv.Eva
 		return nil, tm, err
 	}
 	tm.Breakdown.RotateAndSum = time.Since(st)
+	if dur, err := rescaleAfterAlg5RotateAndSumIfNeeded(eval, ctBase, deferredPointwiseRescaleLevel); err != nil {
+		return nil, tm, fmt.Errorf("deferred rescale after RotateAndSum failed: %w", err)
+	} else {
+		tm.Breakdown.FinalRescale += dur
+	}
 	if traceEnabled {
 		if err := maybeTracePolyNoise("poly/LUT alg5-large: lower polynomial after rotate-sum", ctBase, repeatVector(evaluatePolysPerSlot(base, coeffsLower, mod), r)); err != nil {
 			return nil, tm, err
@@ -4988,7 +6578,7 @@ func benchPolyEvalSparsePow2Alg5LargeBranch(params bfv.Parameters, eval *bfv.Eva
 	}
 
 	st = time.Now()
-	ctPowD, err := mulCtRelinRescale(eval, ctDHalf, ctDHalf)
+	ctPowD, err := mulCtRelinRescaleNamed(eval, ctDHalf, ctDHalf, fmt.Sprintf("Leading term: ctPowD = (x^(d/2))^2 = x^d; d=%d", d))
 	if err != nil {
 		return nil, tm, fmt.Errorf("squaring x^(d/2) to x^d failed: %w", err)
 	}
@@ -5000,7 +6590,7 @@ func benchPolyEvalSparsePow2Alg5LargeBranch(params bfv.Parameters, eval *bfv.Eva
 	}
 
 	st = time.Now()
-	ctLead, err := mulPlainRescale(eval, ctPowD, sparsePackLeadingOrPanic(leadCoeffs, params.MaxSlots()))
+	ctLead, err := mulPlainRescaleNamed(eval, ctPowD, sparsePackLeadingOrPanic(leadCoeffs, params.MaxSlots()), "Leading term: ctLead = ctPowD * sparse leading-coefficient vector a_d")
 	if err != nil {
 		return nil, tm, fmt.Errorf("leading x^d plaintext-ciphertext multiplication failed: %w", err)
 	}
@@ -5034,7 +6624,7 @@ func benchPolyEvalSparsePow2Alg5LargeBranch(params bfv.Parameters, eval *bfv.Eva
 	return ctOut, tm, nil
 }
 
-func benchPolyEvalSparsePow2Alg5(params bfv.Parameters, eval *bfv.Evaluator, ct *rlwe.Ciphertext, m int, coeffsLower [][]uint64, leadCoeffs []uint64, dropBeforeLT bool, ltDropLevel, ltPostLevel int) (*rlwe.Ciphertext, BenchPolyEvalTiming, error) {
+func benchPolyEvalSparsePow2Alg5(params bfv.Parameters, eval *bfv.Evaluator, ct *rlwe.Ciphertext, m int, coeffsLower [][]uint64, leadCoeffs []uint64, dropBeforeLT bool, ltDropLevel, ltPostLevel int, deferLTPostRescale bool) (*rlwe.Ciphertext, BenchPolyEvalTiming, error) {
 	var tm BenchPolyEvalTiming
 	start := time.Now()
 	if len(coeffsLower) == 0 || len(coeffsLower[0]) == 0 {
@@ -5082,7 +6672,7 @@ func benchPolyEvalSparsePow2Alg5(params bfv.Parameters, eval *bfv.Evaluator, ct 
 	}
 
 	st = time.Now()
-	ctR, err := mulCtRelinRescale(eval, ctHalf, ctHalf)
+	ctR, err := mulCtRelinRescaleNamed(eval, ctHalf, ctHalf, fmt.Sprintf("Algorithm 5 line 2: ctR = (x^(r/2))^2 = x^r; r=%d", r))
 	if err != nil {
 		return nil, tm, fmt.Errorf("squaring x^(r/2) to x^r failed: %w", err)
 	}
@@ -5102,9 +6692,9 @@ func benchPolyEvalSparsePow2Alg5(params bfv.Parameters, eval *bfv.Evaluator, ct 
 		return nil, tm, errors.New("missing x^(d/2) ciphertext from the second power stage")
 	}
 	tm.Breakdown.BuildGrouped = time.Since(st)
-	if traceEnabled {
+	if (traceEnabled || globalCt2NoiseProbe || mulTraceNoiseActive()) && len(base) > 0 {
 		xR := powVectorMod(base, r, mod)
-		if err := maybeTracePolyNoise("poly/LUT alg5: grouped powers of x^r", ctG, monomialGenReferenceSlots(xR, buildAllOnesCoeffs(m, s), r, mod)); err != nil {
+		if err := maybeTraceAndPrintImmediatePolyNoise("poly/LUT alg5: grouped powers of x^r", ctG, monomialGenReferenceSlots(xR, buildAllOnesCoeffs(m, s), r, mod), "Algorithm 5 line 3 output c2/ct2 grouped powers"); err != nil {
 			return nil, tm, err
 		}
 		if err := maybeTracePolyNoise("poly/LUT alg5: x^(d/2)", ctDHalf, repeatVector(powVectorMod(base, d/2, mod), r)); err != nil {
@@ -5112,12 +6702,9 @@ func benchPolyEvalSparsePow2Alg5(params bfv.Parameters, eval *bfv.Evaluator, ct 
 		}
 	}
 
-	if ltDropLevel >= 0 {
-		if ctP.Level() > ltDropLevel {
-			eval.DropLevel(ctP, ctP.Level()-ltDropLevel)
-		}
-	} else if dropBeforeLT && ctP.Level() > ctG.Level() {
-		eval.DropLevel(ctP, ctP.Level()-ctG.Level())
+	_, resolvedLTPostLevel, err := applyParallelLTLevelPolicy(eval, ctP, ctG, dropBeforeLT, ltDropLevel, ltPostLevel, deferLTPostRescale)
+	if err != nil {
+		return nil, tm, fmt.Errorf("ParallelLT level policy failed: %w", err)
 	}
 
 	stMatrix := time.Now()
@@ -5126,6 +6713,7 @@ func benchPolyEvalSparsePow2Alg5(params bfv.Parameters, eval *bfv.Evaluator, ct 
 
 	ltStart := time.Now()
 	ctY, ltTiming, err := parallelLT3BSGSHoisted(params, eval, ctP, U, m, s, r)
+	ltCoreDuration := time.Since(ltStart)
 	if err != nil {
 		return nil, tm, fmt.Errorf("ParallelLT failed: %w", err)
 	}
@@ -5135,23 +6723,21 @@ func benchPolyEvalSparsePow2Alg5(params bfv.Parameters, eval *bfv.Evaluator, ct 
 		}
 	}
 	var ltPostRescale time.Duration
-	if ltPostLevel >= 0 && ctY.Level() > ltPostLevel {
-		stRes := time.Now()
-		if err := rescaleCiphertextToLevel(eval, ctY, ltPostLevel); err != nil {
-			return nil, tm, fmt.Errorf("post-ParallelLT rescale failed: %w", err)
-		}
-		ltPostRescale = time.Since(stRes)
+	ltPostRescale, err = rescaleParallelLTOutputToPolicy(eval, ctY, resolvedLTPostLevel, "Post-ParallelLT normalization to ct2/grouped-powers level")
+	if err != nil {
+		return nil, tm, fmt.Errorf("post-ParallelLT rescale failed: %w", err)
 	}
 	if traceEnabled {
 		if err := maybeTracePolyNoise("poly/LUT alg5: ParallelLT output (after post-rescale)", ctY, expectedAlg5LTSlots(base, coeffsLower, r, mod)); err != nil {
 			return nil, tm, err
 		}
 	}
-	setBenchLTBreakdown(&tm.Breakdown, ltMatrixBuild+time.Since(ltStart), ltMatrixBuild, ltPostRescale, ltTiming)
+	setBenchLTBreakdown(&tm.Breakdown, ltMatrixBuild+ltCoreDuration+ltPostRescale, ltMatrixBuild, ltPostRescale, ltTiming)
 
 	st = time.Now()
 	alignCiphertextLevels(eval, ctY, ctG)
-	ctCollapsed, err := mulCtRelinRescale(eval, ctY, ctG)
+	logInputPairCheckpoint("Algorithm 5 line 5 inputs before Mult: c3/ct3=BatchLT output, c2/ct2=grouped powers", "c3", ctY, "c2", ctG)
+	ctCollapsed, deferredPointwiseRescaleLevel, err := alg5PointwiseMultiplyMaybeDeferred(eval, ctY, ctG, m, s)
 	if err != nil {
 		return nil, tm, fmt.Errorf("pointwise multiplication y*g failed: %w", err)
 	}
@@ -5168,6 +6754,11 @@ func benchPolyEvalSparsePow2Alg5(params bfv.Parameters, eval *bfv.Evaluator, ct 
 		return nil, tm, err
 	}
 	tm.Breakdown.RotateAndSum = time.Since(st)
+	if dur, err := rescaleAfterAlg5RotateAndSumIfNeeded(eval, ctBase, deferredPointwiseRescaleLevel); err != nil {
+		return nil, tm, fmt.Errorf("deferred rescale after RotateAndSum failed: %w", err)
+	} else {
+		tm.Breakdown.FinalRescale += dur
+	}
 	if traceEnabled {
 		if err := maybeTracePolyNoise("poly/LUT alg5: lower polynomial after rotate-sum", ctBase, repeatVector(evaluatePolysPerSlot(base, coeffsLower, mod), r)); err != nil {
 			return nil, tm, err
@@ -5175,7 +6766,7 @@ func benchPolyEvalSparsePow2Alg5(params bfv.Parameters, eval *bfv.Evaluator, ct 
 	}
 
 	st = time.Now()
-	ctPowD, err := mulCtRelinRescale(eval, ctDHalf, ctDHalf)
+	ctPowD, err := mulCtRelinRescaleNamed(eval, ctDHalf, ctDHalf, fmt.Sprintf("Leading term: ctPowD = (x^(d/2))^2 = x^d; d=%d", d))
 	if err != nil {
 		return nil, tm, fmt.Errorf("squaring x^(d/2) to x^d failed: %w", err)
 	}
@@ -5187,7 +6778,7 @@ func benchPolyEvalSparsePow2Alg5(params bfv.Parameters, eval *bfv.Evaluator, ct 
 	}
 
 	st = time.Now()
-	ctLead, err := mulPlainRescale(eval, ctPowD, sparsePackLeadingOrPanic(leadCoeffs, params.MaxSlots()))
+	ctLead, err := mulPlainRescaleNamed(eval, ctPowD, sparsePackLeadingOrPanic(leadCoeffs, params.MaxSlots()), "Leading term: ctLead = ctPowD * sparse leading-coefficient vector a_d")
 	if err != nil {
 		return nil, tm, fmt.Errorf("leading x^d plaintext-ciphertext multiplication failed: %w", err)
 	}
@@ -5272,7 +6863,7 @@ func benchPolyEvalSingleSlotDirectPrecomp(params bfv.Parameters, eval *bfv.Evalu
 			return nil, tm, errors.New("missing x^(d/2) ciphertext for leading term")
 		}
 		st = time.Now()
-		ctPowD, err = mulCtRelinRescale(eval, ctHalf, ctHalf)
+		ctPowD, err = mulCtRelinRescaleNamed(eval, ctHalf, ctHalf, fmt.Sprintf("m=1 direct path: ctPowD = (x^(d/2))^2 = x^d; d=%d", pre.D))
 		if err != nil {
 			return nil, tm, fmt.Errorf("squaring x^(d/2) to x^d failed: %w", err)
 		}
@@ -5285,7 +6876,7 @@ func benchPolyEvalSingleSlotDirectPrecomp(params bfv.Parameters, eval *bfv.Evalu
 	}
 
 	st = time.Now()
-	ctLead, err := mulOperandRescale(eval, ctPowD, pre.LeadPT)
+	ctLead, err := mulOperandRescaleNamedWithPlain(eval, ctPowD, pre.LeadPT, pre.LeadVec, "Leading term: ctLead = ctPowD * precomputed leading-coefficient plaintext a_d")
 	if err != nil {
 		return nil, tm, fmt.Errorf("leading x^d plaintext-ciphertext multiplication failed: %w", err)
 	}
@@ -5373,7 +6964,7 @@ func benchPolyEvalSingleSlotDirect(params bfv.Parameters, eval *bfv.Evaluator, c
 			return nil, tm, errors.New("missing x^(d/2) ciphertext for leading term")
 		}
 		st = time.Now()
-		ctPowD, err = mulCtRelinRescale(eval, ctHalf, ctHalf)
+		ctPowD, err = mulCtRelinRescaleNamed(eval, ctHalf, ctHalf, fmt.Sprintf("m=1 direct path: ctPowD = (x^(d/2))^2 = x^d; d=%d", d))
 		if err != nil {
 			return nil, tm, fmt.Errorf("squaring x^(d/2) to x^d failed: %w", err)
 		}
@@ -5386,7 +6977,7 @@ func benchPolyEvalSingleSlotDirect(params bfv.Parameters, eval *bfv.Evaluator, c
 	}
 
 	st = time.Now()
-	ctLead, err := mulPlainRescale(eval, ctPowD, sparsePackLeadingOrPanic(leadCoeffs, params.MaxSlots()))
+	ctLead, err := mulPlainRescaleNamed(eval, ctPowD, sparsePackLeadingOrPanic(leadCoeffs, params.MaxSlots()), "Leading term: ctLead = ctPowD * sparse leading-coefficient vector a_d")
 	if err != nil {
 		return nil, tm, fmt.Errorf("leading x^d plaintext-ciphertext multiplication failed: %w", err)
 	}
@@ -5427,173 +7018,1353 @@ func benchAvgDuration(total time.Duration, runs int) time.Duration {
 	return total / time.Duration(runs)
 }
 
+// Homomorphic-operation diagnostic tracer for polynomial evaluation.
+type MulTraceEntry struct {
+	Index            int
+	Name             string
+	Kind             string
+	In0Level         int
+	In0QBits         int
+	In1Level         int
+	In1QBits         int
+	OutLevel         int
+	OutQBits         int
+	Rescale          bool
+	Duration         time.Duration
+	ExpectedKnown    bool
+	MaxCoeffNoiseAbs string
+	NoiseBudgetBits  string
+	RequiredBitsRaw  int
+}
+
+type MulTraceRecorder struct {
+	Enabled    bool
+	ProbeNoise bool // if true, decrypt/decode every logged output and fill noise columns; very expensive
+	Params     bfv.Parameters
+	Encoder    *bfv.Encoder
+	Dec        *rlwe.Decryptor
+	Mod        uint64
+	Entries    []MulTraceEntry
+	Expected   map[*rlwe.Ciphertext][]uint64
+	ProbeTime  time.Duration // diagnostic time spent decrypting/probing after logged operations; not part of online HE time
+}
+
+var globalMulTracer *MulTraceRecorder
+var globalMulTraceSummaryOnly bool
+
+func newMulTraceRecorder(enabled bool, probeNoise bool, params bfv.Parameters, encoder *bfv.Encoder, dec *rlwe.Decryptor) *MulTraceRecorder {
+	if !enabled {
+		probeNoise = false
+	}
+	var expected map[*rlwe.Ciphertext][]uint64
+	if probeNoise {
+		expected = map[*rlwe.Ciphertext][]uint64{}
+	}
+	return &MulTraceRecorder{Enabled: enabled, ProbeNoise: probeNoise, Params: params, Encoder: encoder, Dec: dec, Mod: params.PlaintextModulus(), Expected: expected}
+}
+
+func qBitsOfLevel(params bfv.Parameters, level int) int {
+	if level < 0 {
+		return -1
+	}
+	if level > params.MaxLevel() {
+		level = params.MaxLevel()
+	}
+	return params.RingQ().AtLevel(level).Modulus().BitLen()
+}
+
+func mulTraceName(helper, detail string) string {
+	detail = strings.TrimSpace(detail)
+	if detail == "" {
+		return helper
+	}
+	return fmt.Sprintf("%s [%s]", detail, helper)
+}
+
+func mulTraceKindLabel(kind string) string {
+	switch kind {
+	case "ct-ct":
+		return "ct×ct"
+	case "ct-ct-lazy":
+		return "ct×ct-lazy"
+	case "ct-pt":
+		return "ct×pt"
+	case "ct-pt-LT":
+		return "ct×pt-LT"
+	case "ct-pt-StC":
+		return "ct×pt-StC"
+	case "ct-pt-Step1":
+		return "ct×pt-Step1"
+	case "ct-op":
+		return "ct×op"
+	case "rot-col":
+		return "rot-col"
+	case "rot-row":
+		return "rot-row"
+	case "add":
+		return "add"
+	case "checkpoint":
+		return "checkpoint"
+	default:
+		return kind
+	}
+}
+
+func formatCipherLevelQ(level, qbits int) string {
+	if level < 0 {
+		return "-"
+	}
+	return fmt.Sprintf("ct:L%d/%db", level, qbits)
+}
+
+func formatMulTraceInput1(e MulTraceEntry) string {
+	if e.In1Level >= 0 {
+		return formatCipherLevelQ(e.In1Level, e.In1QBits)
+	}
+	switch e.Kind {
+	case "ct-pt", "ct-pt-LT", "ct-pt-StC", "ct-pt-Step1":
+		return "pt:vector"
+	case "ct-op":
+		return "pt/op"
+	default:
+		return "-"
+	}
+}
+
+func mulTraceActive() bool {
+	tr := globalMulTracer
+	return tr != nil && tr.Enabled
+}
+
+func mulTraceNoiseActive() bool {
+	tr := globalMulTracer
+	return tr != nil && tr.Enabled && tr.ProbeNoise
+}
+
+func polyClearExpected(ct *rlwe.Ciphertext) {
+	if globalMulTracer == nil || !globalMulTracer.Enabled || !globalMulTracer.ProbeNoise || globalMulTracer.Expected == nil || ct == nil {
+		return
+	}
+	delete(globalMulTracer.Expected, ct)
+}
+
+func polyRegisterExpected(ct *rlwe.Ciphertext, expected []uint64) {
+	if globalMulTracer == nil || !globalMulTracer.Enabled || !globalMulTracer.ProbeNoise || globalMulTracer.Expected == nil || ct == nil {
+		return
+	}
+	if expected == nil {
+		polyClearExpected(ct)
+		return
+	}
+	globalMulTracer.Expected[ct] = append([]uint64(nil), expected...)
+}
+
+func polyExpected(ct *rlwe.Ciphertext) ([]uint64, bool) {
+	if globalMulTracer == nil || !globalMulTracer.Enabled || !globalMulTracer.ProbeNoise || globalMulTracer.Expected == nil || ct == nil {
+		return nil, false
+	}
+	v, ok := globalMulTracer.Expected[ct]
+	return v, ok
+}
+
+func polyExpectedClone(ct *rlwe.Ciphertext) []uint64 {
+	if ev, ok := polyExpected(ct); ok && ev != nil {
+		return append([]uint64(nil), ev...)
+	}
+	return nil
+}
+
+func polyRegisterExpectedAddSaved(dst *rlwe.Ciphertext, saved []uint64, rhs *rlwe.Ciphertext) {
+	if dst == nil {
+		return
+	}
+	if saved == nil || globalMulTracer == nil {
+		polyClearExpected(dst)
+		return
+	}
+	bv, okB := polyExpected(rhs)
+	if !okB || len(saved) != len(bv) {
+		polyClearExpected(dst)
+		return
+	}
+	out := make([]uint64, len(saved))
+	mod := globalMulTracer.Mod
+	for i := range saved {
+		out[i] = (saved[i] + bv[i]) % mod
+	}
+	polyRegisterExpected(dst, out)
+}
+
+func polyCopyExpected(src, dst *rlwe.Ciphertext) {
+	if dst == nil {
+		return
+	}
+	if ev, ok := polyExpected(src); ok {
+		polyRegisterExpected(dst, ev)
+		return
+	}
+	polyClearExpected(dst)
+}
+
+func polyRegisterExpectedAddPlain(dst, src *rlwe.Ciphertext, plain []uint64) {
+	if dst == nil {
+		return
+	}
+	if plain == nil {
+		polyClearExpected(dst)
+		return
+	}
+	if ev, ok := polyExpected(src); ok && len(ev) == len(plain) {
+		out := make([]uint64, len(ev))
+		mod := globalMulTracer.Mod
+		for i := range ev {
+			out[i] = (ev[i] + plain[i]) % mod
+		}
+		polyRegisterExpected(dst, out)
+		return
+	}
+	polyClearExpected(dst)
+}
+
+func polyRegisterExpectedAdd(dst, a, b *rlwe.Ciphertext) {
+	if dst == nil {
+		return
+	}
+	av, okA := polyExpected(a)
+	bv, okB := polyExpected(b)
+	if okA && okB && len(av) == len(bv) {
+		out := make([]uint64, len(av))
+		mod := globalMulTracer.Mod
+		for i := range av {
+			out[i] = (av[i] + bv[i]) % mod
+		}
+		polyRegisterExpected(dst, out)
+		return
+	}
+	polyClearExpected(dst)
+}
+
+func polyRotateSlotsForColumn(vec []uint64, shift int) []uint64 {
+	// This matches the plaintext convention used by rotateWithinHalves in the LT code.
+	return rotateWithinHalves(vec, shift)
+}
+
+func polyRowSwapSlots(vec []uint64) []uint64 {
+	out := make([]uint64, len(vec))
+	half := len(vec) / 2
+	copy(out[:half], vec[half:])
+	copy(out[half:], vec[:half])
+	return out
+}
+
+func polyRegisterExpectedRotateColumns(dst, src *rlwe.Ciphertext, shift int) {
+	if ev, ok := polyExpected(src); ok {
+		polyRegisterExpected(dst, polyRotateSlotsForColumn(ev, shift))
+		return
+	}
+	polyClearExpected(dst)
+}
+
+func polyRegisterExpectedRowSwap(dst, src *rlwe.Ciphertext) {
+	if ev, ok := polyExpected(src); ok {
+		polyRegisterExpected(dst, polyRowSwapSlots(ev))
+		return
+	}
+	polyClearExpected(dst)
+}
+
+func mulSlotsMod(a, b []uint64, mod uint64) []uint64 {
+	if len(a) != len(b) {
+		return nil
+	}
+	out := make([]uint64, len(a))
+	for i := range a {
+		out[i] = mulMod(a[i], b[i], mod)
+	}
+	return out
+}
+
+func constSlotsFromSparseMask(mask []uint64, n int) []uint64 {
+	if len(mask) == n {
+		return append([]uint64(nil), mask...)
+	}
+	return nil
+}
+
+func logOpTrace(name, kind string, in0, in1, out *rlwe.Ciphertext, rescale bool, dur time.Duration, expectedOut []uint64) {
+	tr := globalMulTracer
+	if tr == nil || !tr.Enabled {
+		return
+	}
+	entry := MulTraceEntry{
+		Index:            len(tr.Entries) + 1,
+		Name:             name,
+		Kind:             kind,
+		In0Level:         -1,
+		In0QBits:         -1,
+		In1Level:         -1,
+		In1QBits:         -1,
+		OutLevel:         -1,
+		OutQBits:         -1,
+		Rescale:          rescale,
+		Duration:         dur,
+		ExpectedKnown:    expectedOut != nil && tr.ProbeNoise,
+		MaxCoeffNoiseAbs: "off",
+		NoiseBudgetBits:  "off",
+	}
+	if in0 != nil {
+		entry.In0Level = in0.Level()
+		entry.In0QBits = qBitsOfLevel(tr.Params, in0.Level())
+	}
+	if in1 != nil {
+		entry.In1Level = in1.Level()
+		entry.In1QBits = qBitsOfLevel(tr.Params, in1.Level())
+	}
+	if out != nil {
+		entry.OutLevel = out.Level()
+		entry.OutQBits = qBitsOfLevel(tr.Params, out.Level())
+		if tr.ProbeNoise && expectedOut != nil {
+			polyRegisterExpected(out, expectedOut)
+		}
+	}
+	if tr.ProbeNoise && out != nil && expectedOut != nil {
+		probeStart := time.Now()
+		probe, err := probeCipherNoiseAgainstSlots(tr.Params, tr.Encoder, tr.Dec, out, expectedOut, 0, name)
+		tr.ProbeTime += time.Since(probeStart)
+		if err == nil && probe != nil {
+			entry.MaxCoeffNoiseAbs = probe.MaxCoeffNoiseAbs
+			entry.RequiredBitsRaw = probe.RequiredBitsNoMargin
+			entry.NoiseBudgetBits = fmt.Sprintf("%d", probe.CurrentLogQBits-probe.RequiredBitsNoMargin)
+		} else if err != nil {
+			entry.MaxCoeffNoiseAbs = "probe-error: " + err.Error()
+			entry.NoiseBudgetBits = "n/a"
+		}
+	} else if tr.ProbeNoise {
+		entry.MaxCoeffNoiseAbs = "n/a"
+		entry.NoiseBudgetBits = "n/a"
+	}
+	tr.Entries = append(tr.Entries, entry)
+}
+
+func logMulTrace(name, kind string, in0, in1, out *rlwe.Ciphertext, rescale bool, dur time.Duration, expectedOut []uint64) {
+	if out == nil {
+		return
+	}
+	logOpTrace(name, kind, in0, in1, out, rescale, dur, expectedOut)
+}
+
+func probeCipherBrief(label string, ct *rlwe.Ciphertext) (budget string, maxNoise string) {
+	tr := globalMulTracer
+	if tr == nil || !tr.Enabled || !tr.ProbeNoise || ct == nil {
+		return "off", "off"
+	}
+	expected, ok := polyExpected(ct)
+	if !ok || expected == nil {
+		return "unknown", "unknown"
+	}
+	probeStart := time.Now()
+	probe, err := probeCipherNoiseAgainstSlots(tr.Params, tr.Encoder, tr.Dec, ct, expected, 0, label)
+	tr.ProbeTime += time.Since(probeStart)
+	if err != nil || probe == nil {
+		if err != nil {
+			return "probe-error", err.Error()
+		}
+		return "probe-error", "nil probe"
+	}
+	return fmt.Sprintf("%d", probe.CurrentLogQBits-probe.RequiredBitsNoMargin), probe.MaxCoeffNoiseAbs
+}
+
+func logInputPairCheckpoint(name, label0 string, ct0 *rlwe.Ciphertext, label1 string, ct1 *rlwe.Ciphertext) {
+	tr := globalMulTracer
+	if tr == nil || !tr.Enabled || !tr.ProbeNoise {
+		return
+	}
+	b0, n0 := probeCipherBrief(name+"/"+label0, ct0)
+	b1, n1 := probeCipherBrief(name+"/"+label1, ct1)
+	entry := MulTraceEntry{
+		Index:            len(tr.Entries) + 1,
+		Name:             name,
+		Kind:             "checkpoint",
+		In0Level:         -1,
+		In0QBits:         -1,
+		In1Level:         -1,
+		In1QBits:         -1,
+		OutLevel:         -1,
+		OutQBits:         -1,
+		Rescale:          false,
+		Duration:         0,
+		ExpectedKnown:    true,
+		NoiseBudgetBits:  fmt.Sprintf("%s:%s; %s:%s", label0, b0, label1, b1),
+		MaxCoeffNoiseAbs: fmt.Sprintf("%s:%s; %s:%s", label0, n0, label1, n1),
+	}
+	if ct0 != nil {
+		entry.In0Level = ct0.Level()
+		entry.In0QBits = qBitsOfLevel(tr.Params, ct0.Level())
+	}
+	if ct1 != nil {
+		entry.In1Level = ct1.Level()
+		entry.In1QBits = qBitsOfLevel(tr.Params, ct1.Level())
+	}
+	tr.Entries = append(tr.Entries, entry)
+}
+
+func expectedForCtCtMul(out *rlwe.Ciphertext, a, b *rlwe.Ciphertext) []uint64 {
+	av, okA := polyExpected(a)
+	bv, okB := polyExpected(b)
+	if okA && okB {
+		return mulSlotsMod(av, bv, globalMulTracer.Mod)
+	}
+	return nil
+}
+
+func expectedForCtPlainMul(ct *rlwe.Ciphertext, plain []uint64) []uint64 {
+	av, okA := polyExpected(ct)
+	if !okA || plain == nil {
+		return nil
+	}
+	if len(plain) != len(av) {
+		return nil
+	}
+	return mulSlotsMod(av, plain, globalMulTracer.Mod)
+}
+
+func expectedForAdd(a, b *rlwe.Ciphertext) []uint64 {
+	av, okA := polyExpected(a)
+	bv, okB := polyExpected(b)
+	if !okA || !okB || len(av) != len(bv) || globalMulTracer == nil {
+		return nil
+	}
+	out := make([]uint64, len(av))
+	mod := globalMulTracer.Mod
+	for i := range av {
+		out[i] = (av[i] + bv[i]) % mod
+	}
+	return out
+}
+
+func expectedForRotateColumns(ct *rlwe.Ciphertext, shift int) []uint64 {
+	ev, ok := polyExpected(ct)
+	if !ok {
+		return nil
+	}
+	return polyRotateSlotsForColumn(ev, shift)
+}
+
+func expectedForRowSwap(ct *rlwe.Ciphertext) []uint64 {
+	ev, ok := polyExpected(ct)
+	if !ok {
+		return nil
+	}
+	return polyRowSwapSlots(ev)
+}
+
+func printMulTraceSummary() {
+	tr := globalMulTracer
+	if tr == nil || !tr.Enabled {
+		return
+	}
+	fmt.Println("========== Homomorphic operation-level trace ==========")
+	fmt.Printf("operations logged      : %d\n", len(tr.Entries))
+	fmt.Println("legend: ct:Lk/Qbits is a ciphertext at modulus-chain level k; pt:vector/pt-op is a plaintext operand, not a ciphertext level.")
+	if tr.ProbeNoise {
+		fmt.Println("noise columns are filled by diagnostic decrypt/decode probes; checkpoint rows do not perform HE work.")
+	} else {
+		fmt.Println("noise columns are disabled for speed; use -mul-trace-noise to recover noiseBudget/max|noise| at every row.")
+	}
+	if !globalMulTraceSummaryOnly {
+		fmt.Println("# | op | rescale | in0 | in1 | out | noiseBudget | max|noise| | time | algorithm step")
+	} else {
+		fmt.Println("row printing             : disabled by -mul-trace-summary-only")
+	}
+	var total time.Duration
+	byKind := map[string]time.Duration{}
+	byKindCount := map[string]int{}
+	for _, e := range tr.Entries {
+		total += e.Duration
+		byKind[e.Kind] += e.Duration
+		byKindCount[e.Kind]++
+		if !globalMulTraceSummaryOnly {
+			fmt.Printf("%03d | %-10s | %-5v | %-11s | %-10s | %-11s | %-11s | %-14s | %-10v | %s\n",
+				e.Index, mulTraceKindLabel(e.Kind), e.Rescale,
+				formatCipherLevelQ(e.In0Level, e.In0QBits), formatMulTraceInput1(e), formatCipherLevelQ(e.OutLevel, e.OutQBits),
+				e.NoiseBudgetBits, e.MaxCoeffNoiseAbs, e.Duration.Round(time.Microsecond), e.Name)
+		}
+	}
+	fmt.Printf("operation time sum      : %v (sum of the table time column only; checkpoint rows have zero HE time)\n", total.Round(time.Microsecond))
+	for _, kind := range []string{"ct-ct", "ct-ct-lazy", "ct-pt", "ct-pt-LT", "ct-pt-StC", "ct-pt-Step1", "ct-op", "rot-col", "rot-row", "add", "final-rescale", "checkpoint"} {
+		if byKindCount[kind] > 0 {
+			fmt.Printf("  - %-10s : %v over %d entries\n", mulTraceKindLabel(kind), byKind[kind].Round(time.Microsecond), byKindCount[kind])
+		}
+	}
+	if tr.ProbeNoise || tr.ProbeTime > 0 {
+		fmt.Printf("operation probe time    : %v (diagnostic decrypt/decode time, not included above)\n", tr.ProbeTime.Round(time.Microsecond))
+	}
+	fmt.Println("================================================")
+}
+
+func mulTraceKindCounts() map[string]int {
+	out := map[string]int{}
+	if globalMulTracer == nil {
+		return out
+	}
+	for _, e := range globalMulTracer.Entries {
+		out[e.Kind]++
+	}
+	return out
+}
+
+func mulTraceProbeTime() time.Duration {
+	if globalMulTracer == nil {
+		return 0
+	}
+	return globalMulTracer.ProbeTime
+}
+
+func polyNoiseProbeTime() time.Duration {
+	if globalPolyNoiseTracer == nil || !globalPolyNoiseTracer.Enabled {
+		return 0
+	}
+	return globalPolyNoiseTracer.ProbeTime
+}
+
+func stageBreakdownTotal(tm BenchPolyEvalTiming) time.Duration {
+	return tm.Breakdown.BuildBasis +
+		tm.Breakdown.SquareXRHalf +
+		tm.Breakdown.BuildGrouped +
+		tm.Breakdown.ParallelLT +
+		tm.Breakdown.PointwiseMul +
+		tm.Breakdown.RotateAndSum +
+		tm.Breakdown.ComputeXD +
+		tm.Breakdown.LeadingTerm +
+		tm.Breakdown.FinalAdd +
+		tm.Breakdown.FinalRescale
+}
+func parseBitListExpanded(spec string) ([]int, error) {
+	spec = strings.TrimSpace(strings.NewReplacer("，", ",", "；", ";").Replace(spec))
+	if spec == "" {
+		return nil, errors.New("empty bit-size list")
+	}
+	fields := strings.Split(spec, ",")
+	out := make([]int, 0, len(fields))
+	for _, raw := range fields {
+		part := strings.TrimSpace(raw)
+		if part == "" {
+			return nil, fmt.Errorf("empty bit-size entry in %q", spec)
+		}
+		rep := 1
+		valuePart := part
+		if pos := strings.IndexAny(part, "xX*"); pos >= 0 {
+			valuePart = strings.TrimSpace(part[:pos])
+			repPart := strings.TrimSpace(part[pos+1:])
+			if valuePart == "" || repPart == "" {
+				return nil, fmt.Errorf("invalid repeated bit-size %q", part)
+			}
+			if _, err := fmt.Sscan(repPart, &rep); err != nil || rep <= 0 {
+				return nil, fmt.Errorf("invalid repeat count in %q", part)
+			}
+		}
+		var v int
+		if _, err := fmt.Sscan(valuePart, &v); err != nil || v <= 0 {
+			return nil, fmt.Errorf("invalid bit-size in %q", part)
+		}
+		for i := 0; i < rep; i++ {
+			out = append(out, v)
+		}
+	}
+	return out, nil
+}
+
+func buildRandomPolynomialCoeffs(degree int, mod uint64, seed int64) []uint64 {
+	rng := rand.New(rand.NewSource(seed))
+	out := make([]uint64, degree+1)
+	for i := range out {
+		out[i] = uint64(rng.Int63n(int64(mod)))
+	}
+	return out
+}
+
+func splitPolynomialForAlg5(full []uint64, degree int, m int) (lower [][]uint64, lead []uint64, lowerLen int, splitTop bool, err error) {
+	if degree < 0 {
+		return nil, nil, 0, false, fmt.Errorf("degree must be non-negative")
+	}
+	if len(full) < degree+1 {
+		return nil, nil, 0, false, fmt.Errorf("coeff list length %d < degree+1=%d", len(full), degree+1)
+	}
+	if isPow2(degree + 1) {
+		lowerLen = degree + 1
+		splitTop = false
+	} else if degree > 0 && isPow2(degree) {
+		lowerLen = degree
+		splitTop = true
+	} else {
+		return nil, nil, 0, false, fmt.Errorf("need degree+1 or degree to be a power of two; got degree=%d", degree)
+	}
+	baseLower := append([]uint64(nil), full[:lowerLen]...)
+	lower = replicateSinglePolynomial(baseLower, m)
+	lead = make([]uint64, m)
+	if splitTop {
+		for i := range lead {
+			lead[i] = full[degree]
+		}
+	}
+	return lower, lead, lowerLen, splitTop, nil
+}
+
+func decodeSlots(params bfv.Parameters, encoder *bfv.Encoder, dec *rlwe.Decryptor, ct *rlwe.Ciphertext) ([]uint64, error) {
+	pt := dec.DecryptNew(ct)
+	out := make([]uint64, params.MaxSlots())
+	if err := encoder.Decode(pt, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func printBenchPolyTiming(tm BenchPolyEvalTiming) {
+	fmt.Printf("poly algorithm              : %s\n", tm.Algorithm)
+	stageTotal := stageBreakdownTotal(tm)
+	diagTotal := mulTraceProbeTime() + polyNoiseProbeTime()
+	unaccounted := tm.Total - stageTotal
+	if unaccounted < 0 {
+		unaccounted = 0
+	}
+	fmt.Printf("poly homomorphic subtotal   : %v (sum of listed HE stages; use this for online benchmark)\n", stageTotal)
+	fmt.Printf("poly wall/evaluator total   : %v (includes evaluator time plus final rescale time; diagnostics may add wall overhead)\n", tm.Total)
+	fmt.Printf("poly unaccounted overhead   : %v (wall - stage subtotal; mostly trace/expected construction)\n", unaccounted)
+	fmt.Printf("diagnostic probe overhead   : %v (mul-trace probes %v + checkpoint probes %v; subset of overhead)\n", diagTotal, mulTraceProbeTime(), polyNoiseProbeTime())
+	fmt.Printf("  - build basis / P         : %v\n", tm.Breakdown.BuildBasis)
+	fmt.Printf("  - square x^(r/2)          : %v\n", tm.Breakdown.SquareXRHalf)
+	fmt.Printf("  - build grouped powers    : %v\n", tm.Breakdown.BuildGrouped)
+	fmt.Printf("  - ParallelLT total        : %v\n", tm.Breakdown.ParallelLT)
+	fmt.Printf("    · LT matrix build       : %v\n", tm.Breakdown.LTMatrixBuild)
+	fmt.Printf("    · LT decompose          : %v\n", tm.Breakdown.LTDecompose)
+	fmt.Printf("    · LT baby rotations     : %v\n", tm.Breakdown.LTBabyRotations)
+	fmt.Printf("    · LT giant rotations    : %v\n", tm.Breakdown.LTGiantRotations)
+	fmt.Printf("    · LT pt-ct multiplies   : %v\n", tm.Breakdown.LTPlaintextCipherMul)
+	fmt.Printf("    · LT first-stage other  : %v\n", tm.Breakdown.LTFirstStageOther)
+	fmt.Printf("    · LT second stage       : %v\n", tm.Breakdown.LTSecondStage)
+	fmt.Printf("    · LT post-process       : %v\n", tm.Breakdown.LTPostProcess)
+	fmt.Printf("    · LT post-rescale       : %v\n", tm.Breakdown.LTPostRescale)
+	fmt.Printf("    · LT residual           : %v\n", tm.Breakdown.LTResidual)
+	fmt.Printf("  - pointwise multiply      : %v\n", tm.Breakdown.PointwiseMul)
+	fmt.Printf("  - rotate-and-sum          : %v\n", tm.Breakdown.RotateAndSum)
+	fmt.Printf("  - compute x^d             : %v\n", tm.Breakdown.ComputeXD)
+	fmt.Printf("  - leading term            : %v\n", tm.Breakdown.LeadingTerm)
+	fmt.Printf("  - final add               : %v\n", tm.Breakdown.FinalAdd)
+	fmt.Printf("  - final rescale/modswitch : %v\n", tm.Breakdown.FinalRescale)
+}
+
+func secondsOf(d time.Duration) float64 {
+	return float64(d) / float64(time.Second)
+}
+
+func formatSeconds3(d time.Duration) string {
+	return fmt.Sprintf("%.3f", secondsOf(d))
+}
+
+func formatGiB(bytes int64) string {
+	if bytes <= 0 {
+		return "0.00"
+	}
+	return fmt.Sprintf("%.2f", float64(bytes)/(1024.0*1024.0*1024.0))
+}
+
+func sumIntSlice(xs []int) int {
+	s := 0
+	for _, x := range xs {
+		s += x
+	}
+	return s
+}
+
+func formatBitBudget(xs []int) string {
+	if len(xs) == 0 {
+		return "0"
+	}
+	parts := make([]string, 0)
+	for i := 0; i < len(xs); {
+		j := i + 1
+		for j < len(xs) && xs[j] == xs[i] {
+			j++
+		}
+		if j-i == 1 {
+			parts = append(parts, fmt.Sprintf("%d", xs[i]))
+		} else {
+			parts = append(parts, fmt.Sprintf("%d×%d", xs[i], j-i))
+		}
+		i = j
+	}
+	return strings.Join(parts, ", ")
+}
+
+func formatDegreeForSummary(d int) string {
+	if d > 0 && isPow2(d) {
+		return fmt.Sprintf("2^%d", bits.Len(uint(d))-1)
+	}
+	if d >= 0 && isPow2(d+1) {
+		return fmt.Sprintf("2^%d-1", bits.Len(uint(d+1))-1)
+	}
+	return fmt.Sprintf("%d", d)
+}
+
+func formatPowerOfTwoModulus(p uint64) string {
+	if p > 0 && (p&(p-1)) == 0 {
+		return fmt.Sprintf("2^%d", bits.Len64(p)-1)
+	}
+	return fmt.Sprintf("%d", p)
+}
+
+func failBoundLog2(B float64, denom float64) float64 {
+	if B <= 0 || denom <= 0 {
+		return math.Inf(1)
+	}
+	return 1.0 - (6.0*B*B)/(denom*math.Ln2)
+}
+
+func formatLog2FailBound(log2p float64) string {
+	if math.IsInf(log2p, -1) {
+		return "0"
+	}
+	if math.IsInf(log2p, 1) || math.IsNaN(log2p) {
+		return "n/a"
+	}
+	if log2p <= 0 {
+		return fmt.Sprintf("≤ 2^%.2f", log2p)
+	}
+	return fmt.Sprintf("≤ %.3g", math.Pow(2, log2p))
+}
+
+func displayWidth(s string) int {
+	return len([]rune(s))
+}
+
+func padDisplayCell(s string, width int, rightAlign bool) string {
+	pad := width - displayWidth(s)
+	if pad <= 0 {
+		return s
+	}
+	if rightAlign {
+		return strings.Repeat(" ", pad) + s
+	}
+	return s + strings.Repeat(" ", pad)
+}
+
+func printAlignedPipeTable(headers []string, rows [][]string, rightAlign []bool) {
+	cols := len(headers)
+	widths := make([]int, cols)
+	for i, h := range headers {
+		widths[i] = displayWidth(h)
+	}
+	for _, row := range rows {
+		for i := 0; i < cols && i < len(row); i++ {
+			if w := displayWidth(row[i]); w > widths[i] {
+				widths[i] = w
+			}
+		}
+	}
+	isRight := func(i int) bool {
+		return i < len(rightAlign) && rightAlign[i]
+	}
+	printRow := func(row []string) {
+		for i := 0; i < cols; i++ {
+			if i > 0 {
+				fmt.Print(" | ")
+			}
+			cell := ""
+			if i < len(row) {
+				cell = row[i]
+			}
+			fmt.Print(padDisplayCell(cell, widths[i], isRight(i)))
+		}
+		fmt.Println()
+	}
+	printRow(headers)
+	for i := 0; i < cols; i++ {
+		if i > 0 {
+			fmt.Print("-+-")
+		}
+		fmt.Print(strings.Repeat("-", widths[i]))
+	}
+	fmt.Println()
+	for _, row := range rows {
+		printRow(row)
+	}
+}
+
+func splitLogQForPaperSummary(logQBits []int, packingLevels, bufferLevels int, hasStC bool) (packing, polyEval, stc, buffer, base string) {
+	n := len(logQBits)
+	if n == 0 {
+		return "0", "0", "0", "0", "0"
+	}
+	if packingLevels < 0 {
+		packingLevels = 0
+	}
+	if bufferLevels < 0 {
+		bufferLevels = 0
+	}
+	if packingLevels > n {
+		packingLevels = n
+	}
+	end := n - packingLevels
+	if end < 1 {
+		end = 1
+	}
+	base = formatBitBudget(logQBits[:1])
+	idx := 1
+	if bufferLevels > 0 && idx < end {
+		to := idx + bufferLevels
+		if to > end {
+			to = end
+		}
+		buffer = formatBitBudget(logQBits[idx:to])
+		idx = to
+	} else {
+		buffer = "0"
+	}
+	if hasStC && idx < end {
+		stc = formatBitBudget(logQBits[idx : idx+1])
+		idx++
+	} else {
+		stc = "0"
+	}
+	if idx < end {
+		polyEval = formatBitBudget(logQBits[idx:end])
+	} else {
+		polyEval = "0"
+	}
+	if packingLevels > 0 && end < n {
+		packing = formatBitBudget(logQBits[end:])
+	} else {
+		packing = "0"
+	}
+	return packing, polyEval, stc, buffer, base
+}
+
+func formatSigmaForSummary(sigma float64, count int) string {
+	if count < 2 {
+		return "n/a"
+	}
+	return fmt.Sprintf("%.4f", sigma)
+}
+
+func printPaperStyleFBSummary(
+	N, m, degree, lweN int,
+	T, p uint64,
+	logQBits, logPBits []int,
+	packingLevels, bufferLevels int,
+	hasStC bool,
+	params bfv.Parameters,
+	bootstrapKeyBytes int64,
+	step1, step2EvalPower, step2BatchLT, step2Total, step3, onlineSubtotal, onlineWall time.Duration,
+	sigmaEmp float64,
+	noiseCount int,
+	secretInfo TailSecretInfo,
+) {
+	packing, polyEval, stc, buffer, base := splitLogQForPaperSummary(logQBits, packingLevels, bufferLevels, hasStC)
+	paramBits := 0
+	if p > 0 {
+		paramBits = bits.Len64(p - 1)
+	}
+	logPQ := qBitsOfLevel(params, params.MaxLevel()) + sumIntSlice(logPBits)
+	B := float64(T / (2 * p))
+	paperLog2 := failBoundLog2(B, float64(lweN+1))
+	summaryLog2 := paperLog2
+	if secretInfo.H > 0 {
+		summaryLog2 = failBoundLog2(B, float64(secretInfo.H+1))
+	}
+
+	fmt.Println()
+	fmt.Println("========== Paper-style functional bootstrapping summary ==========")
+	fmt.Println("Parameter summary:")
+	printAlignedPipeTable(
+		[]string{"Parameter set", "N", "log(PQ)", "d", "q", "p", "logQ Packing", "logQ PolyEval", "logQ StC", "logQ Buffer", "logQ Base", "logP"},
+		[][]string{{
+			fmt.Sprintf("%d-bit (m=%d)", paramBits, m),
+			fmt.Sprintf("%d", N),
+			fmt.Sprintf("%d", logPQ),
+			formatDegreeForSummary(degree),
+			fmt.Sprintf("%d", T),
+			formatPowerOfTwoModulus(p),
+			packing,
+			polyEval,
+			stc,
+			buffer,
+			base,
+			formatBitBudget(logPBits),
+		}},
+		[]bool{false, true, true, true, true, true, true, true, true, true, true, true},
+	)
+
+	fmt.Println()
+	fmt.Println("Runtime/noise summary:")
+	printAlignedPipeTable(
+		[]string{"m", "p", "Bootstrap key (GiB, est.)", "Step 1", "Step 2 EvalPower", "Step 2 BatchLT", "Step 2 Total", "Step 3", "Online subtotal", "Online wall", "Noise σ_res", "Per-LWE fail. prob."},
+		[][]string{{
+			fmt.Sprintf("%d", m),
+			fmt.Sprintf("%d", p),
+			formatGiB(bootstrapKeyBytes),
+			formatSeconds3(step1),
+			formatSeconds3(step2EvalPower),
+			formatSeconds3(step2BatchLT),
+			formatSeconds3(step2Total),
+			formatSeconds3(step3),
+			formatSeconds3(onlineSubtotal),
+			formatSeconds3(onlineWall),
+			formatSigmaForSummary(sigmaEmp, noiseCount),
+			formatLog2FailBound(summaryLog2),
+		}},
+		[]bool{true, true, true, true, true, true, true, true, true, true, true, false},
+	)
+}
+
+func printFailureProbabilitySummary(T, p uint64, lweN int, secretInfo TailSecretInfo, sigmaEmp float64, observed TailNoiseStats) {
+	if p == 0 || lweN <= 0 {
+		return
+	}
+	B := float64(T / (2 * p))
+	paperLog2 := failBoundLog2(B, float64(lweN+1))
+	secretNormSq := secretInfo.H
+	if secretNormSq <= 0 {
+		secretNormSq = lweN
+	}
+	secretAwareLog2 := failBoundLog2(B, float64(secretNormSq+1))
+	fmt.Println()
+	fmt.Println("Failure-probability summary:")
+	fmt.Printf("decoding radius B          : floor(T/(2p)) = %.0f\n", B)
+	if observed.Count < 2 {
+		fmt.Printf("empirical sigma_res        : n/a  (only %d output LWE noise sample; centered std. dev. is not meaningful; RMS=%.4f)\n", observed.Count, observed.RMS)
+	} else {
+		fmt.Printf("empirical sigma_res        : %.4f  (centered std. dev. over this invocation's %d output LWE noises; RMS=%.4f)\n", sigmaEmp, observed.Count, observed.RMS)
+	}
+	fmt.Printf("observed over-radius       : %d/%d, max|e|=%d\n", observed.OverBound, observed.Count, observed.MaxAbs)
+	if observed.OverBound > 0 {
+		fmt.Printf("observed failure warning   : empirical/theoretical sigma summaries are not a correctness certificate here; the observed phase error already exceeds the decoding radius.\n")
+	}
+	fmt.Printf("paper-style analytic bound : %s  using denominator n+1=%d\n", formatLog2FailBound(paperLog2), lweN+1)
+	if secretInfo.H > 0 {
+		fmt.Printf("secret-aware sparse bound  : %s  using ||s||_2^2+1=h+1=%d\n", formatLog2FailBound(secretAwareLog2), secretInfo.H+1)
+	}
+}
+
+type RunPolynomialBuildResult struct {
+	FullCoeffs  []uint64
+	CoeffsLower [][]uint64
+	LeadCoeffs  []uint64
+	LowerLen    int
+	SplitTop    bool
+	CoeffDesc   string
+	FuncTable   []uint64
+	FuncDesc    string
+	Timing      BenchDynamicSetupTiming
+}
+
+func buildRunPolynomialCoeffs(T, p uint64, degree, m int, coeffMode, funcSpec, funcTableInline, funcFile string, coeffSeed, funcSeed int64, schemeD bool, schemeDScaleS uint64) (RunPolynomialBuildResult, error) {
+	var out RunPolynomialBuildResult
+	mode := strings.ToLower(strings.TrimSpace(coeffMode))
+	var full []uint64
+	var desc string
+	var err error
+	switch mode {
+	case "lut":
+		stFunc := time.Now()
+		funcTable, funcDesc, err := buildFunctionTableWithSeed(p, funcSpec, funcTableInline, funcFile, funcSeed)
+		out.Timing.FunctionTable = time.Since(stFunc)
+		if err != nil {
+			return out, err
+		}
+		out.FuncTable = append([]uint64(nil), funcTable...)
+		out.FuncDesc = funcDesc
+		if degree < int(T)-1 {
+			return out, fmt.Errorf("degree=%d is smaller than the full-field LUT degree %d; use degree >= T-1 and pad with zero high coefficients", degree, T-1)
+		}
+		stLUT := time.Now()
+		scale := uint64(1)
+		if schemeD {
+			scale = schemeDScaleS
+		}
+		full, err = buildStrictFunctionalLUTPolynomialCoefficients(T, p, funcTable, 1, scale)
+		out.Timing.LUTBuild = time.Since(stLUT)
+		if err != nil {
+			return out, err
+		}
+		full = padPolynomialCoefficientsToDegree(full, degree)
+		if schemeD {
+			desc = fmt.Sprintf("Scheme-D strict LUT polynomial for %s; Scheme-D output-scaled LUT F(Delta*m+e)=S*f_phase(m), f_phase=Delta*f_msg, S=%d", funcDesc, schemeDScaleS)
+		} else {
+			desc = "strict interval LUT polynomial for " + funcDesc
+		}
+	case "random":
+		st := time.Now()
+		full = buildRandomPolynomialCoeffs(degree, T, coeffSeed)
+		out.Timing.LUTBuild = time.Since(st)
+		if schemeD {
+			full = scalarMulVectorMod(full, schemeDScaleS, T)
+			desc = fmt.Sprintf("random degree-%d polynomial; Scheme-D output-scaled polynomial F(x)=S*P(x), S=%d", degree, schemeDScaleS)
+		} else {
+			desc = fmt.Sprintf("random degree-%d polynomial", degree)
+		}
+	default:
+		return out, fmt.Errorf("unknown -coeff-mode=%q; use random or lut", coeffMode)
+	}
+	if degree >= len(full) {
+		full = padPolynomialCoefficientsToDegree(full, degree)
+	}
+	coeffsLower, leadCoeffs, lowerLen, splitTop, err := splitPolynomialForAlg5(full, degree, m)
+	if err != nil {
+		return out, err
+	}
+	out.FullCoeffs = full
+	out.CoeffsLower = coeffsLower
+	out.LeadCoeffs = leadCoeffs
+	out.LowerLen = lowerLen
+	out.SplitTop = splitTop
+	out.CoeffDesc = desc
+	return out, nil
+}
+
+func scaleRunPolynomialBuildResult(in RunPolynomialBuildResult, scalar, mod uint64, label string) RunPolynomialBuildResult {
+	if scalar%mod == 1 || mod == 0 {
+		return in
+	}
+	out := in
+	out.FullCoeffs = scalarMulVectorMod(in.FullCoeffs, scalar, mod)
+	out.CoeffsLower = scaleMatrixMod(in.CoeffsLower, scalar, mod)
+	out.LeadCoeffs = scalarMulVectorMod(in.LeadCoeffs, scalar, mod)
+	if label == "" {
+		label = fmt.Sprintf("scaled by %d", scalar%mod)
+	}
+	out.CoeffDesc = in.CoeffDesc + "; " + label
+	return out
+}
+
+func benchPolyEvalWithPlan(params bfv.Parameters, eval *bfv.Evaluator, ctIn *rlwe.Ciphertext, m, lowerLen, r int, coeffsLower [][]uint64, leadCoeffs []uint64, pre *PreprocessedPolyEval, largeAlg5Branch bool, dropBeforeLT bool, effectiveLTLevel int, effectiveLTPostLevel int, ltScaleAfterMul bool) (*rlwe.Ciphertext, BenchPolyEvalTiming, error) {
+	if m == 1 && lowerLen <= r {
+		if pre != nil {
+			return benchPolyEvalSingleSlotDirectPrecomp(params, eval, ctIn, pre)
+		}
+		return benchPolyEvalSingleSlotDirect(params, eval, ctIn, m, coeffsLower, leadCoeffs)
+	}
+	if largeAlg5Branch {
+		var preLT *PreprocessedParallelLT3
+		if pre != nil {
+			preLT = pre.LT
+		}
+		return benchPolyEvalSparsePow2Alg5LargeBranch(params, eval, ctIn, m, coeffsLower, leadCoeffs, preLT, dropBeforeLT, effectiveLTLevel, effectiveLTPostLevel, ltScaleAfterMul)
+	}
+	if pre != nil {
+		return benchPolyEvalSparsePow2Alg5Precomp(params, eval, ctIn, pre, dropBeforeLT, effectiveLTLevel, effectiveLTPostLevel, ltScaleAfterMul)
+	}
+	return benchPolyEvalSparsePow2Alg5(params, eval, ctIn, m, coeffsLower, leadCoeffs, dropBeforeLT, effectiveLTLevel, effectiveLTPostLevel, ltScaleAfterMul)
+}
+
+func resetMulTraceForRun(params bfv.Parameters, encoder *bfv.Encoder, dec *rlwe.Decryptor, enabled bool, probeNoise bool) {
+	globalMulTracer = newMulTraceRecorder(enabled, probeNoise, params, encoder, dec)
+}
+
+func appendTailNoiseDiffs(dst []int64, actual, target []uint64, mod uint64) []int64 {
+	n := len(actual)
+	if len(target) < n {
+		n = len(target)
+	}
+	for i := 0; i < n; i++ {
+		dst = append(dst, centeredDiff(actual[i], target[i], mod))
+	}
+	return dst
+}
+
+func maxAbsInt64Slice(v []int64) int64 {
+	var m int64
+	for _, x := range v {
+		ax := abs64(x)
+		if ax > m {
+			m = ax
+		}
+	}
+	return m
+}
+
+func meanAbsInt64(v []int64) float64 {
+	if len(v) == 0 {
+		return 0
+	}
+	var s float64
+	for _, x := range v {
+		s += float64(abs64(x))
+	}
+	return s / float64(len(v))
+}
+
+func rmsInt64(v []int64) float64 {
+	if len(v) == 0 {
+		return 0
+	}
+	var s float64
+	for _, x := range v {
+		f := float64(x)
+		s += f * f
+	}
+	return math.Sqrt(s / float64(len(v)))
+}
+
+func formatQPrimeNoiseDiffSummary(label string, diffs []int64) string {
+	if len(diffs) == 0 {
+		return fmt.Sprintf("%s: n/a", label)
+	}
+	return fmt.Sprintf("%s: samples=%d, max|e|=%d, RMS=%.3f, mean|e|=%.3f, std=%.3f", label, len(diffs), maxAbsInt64Slice(diffs), rmsInt64(diffs), meanAbsInt64(diffs), stdDevInt64(diffs))
+}
+
+func projectedTNoiseFromQPrime(maxAbsQ int64, qPrime, t uint64) float64 {
+	if maxAbsQ < 0 {
+		maxAbsQ = -maxAbsQ
+	}
+	if qPrime == 0 {
+		return 0
+	}
+	return float64(maxAbsQ) * float64(t) / float64(qPrime)
+}
+
+func minQPrimeForProjectedTNoise(maxAbsQ int64, t, radius uint64) *big.Int {
+	if maxAbsQ < 0 {
+		maxAbsQ = -maxAbsQ
+	}
+	if maxAbsQ == 0 || t == 0 || radius == 0 {
+		return big.NewInt(0)
+	}
+	num := new(big.Int).SetInt64(maxAbsQ)
+	num.Mul(num, new(big.Int).SetUint64(t))
+	den := new(big.Int).SetUint64(radius)
+	// ceil(num / den). This is a heuristic threshold for max_Q * T / Q' < radius.
+	q := new(big.Int).Add(num, new(big.Int).Sub(den, big.NewInt(1)))
+	q.Div(q, den)
+	return q
+}
+
+func addPolyTiming(dst *BenchPolyEvalTiming, src BenchPolyEvalTiming) {
+	dst.Total += src.Total
+	dst.Breakdown.BuildBasis += src.Breakdown.BuildBasis
+	dst.Breakdown.SquareXRHalf += src.Breakdown.SquareXRHalf
+	dst.Breakdown.BuildGrouped += src.Breakdown.BuildGrouped
+	dst.Breakdown.ParallelLT += src.Breakdown.ParallelLT
+	dst.Breakdown.LTMatrixBuild += src.Breakdown.LTMatrixBuild
+	dst.Breakdown.LTDecompose += src.Breakdown.LTDecompose
+	dst.Breakdown.LTBabyRotations += src.Breakdown.LTBabyRotations
+	dst.Breakdown.LTGiantRotations += src.Breakdown.LTGiantRotations
+	dst.Breakdown.LTPlaintextCipherMul += src.Breakdown.LTPlaintextCipherMul
+	dst.Breakdown.LTFirstStageOther += src.Breakdown.LTFirstStageOther
+	dst.Breakdown.LTSecondStage += src.Breakdown.LTSecondStage
+	dst.Breakdown.LTPostProcess += src.Breakdown.LTPostProcess
+	dst.Breakdown.LTPostRescale += src.Breakdown.LTPostRescale
+	dst.Breakdown.LTResidual += src.Breakdown.LTResidual
+	dst.Breakdown.PointwiseMul += src.Breakdown.PointwiseMul
+	dst.Breakdown.RotateAndSum += src.Breakdown.RotateAndSum
+	dst.Breakdown.ComputeXD += src.Breakdown.ComputeXD
+	dst.Breakdown.LeadingTerm += src.Breakdown.LeadingTerm
+	dst.Breakdown.FinalAdd += src.Breakdown.FinalAdd
+	dst.Breakdown.FinalRescale += src.Breakdown.FinalRescale
+	dst.Breakdown.PowerGen += src.Breakdown.PowerGen
+	dst.Breakdown.OuterCombine += src.Breakdown.OuterCombine
+}
+
 func main() {
-	NFlag := flag.Int("N", 32, "BFV ring degree / slot count N (power of two)")
-	mFlag := flag.Int("m", 4, "number of logical messages m packed sparsely into the BFV slots")
-	nFlag := flag.Int("n", 8, "target LWE dimension n = len(a) = len(s); independent of the sparse input length m")
-	dFlag := flag.Int("d", 65535, "target polynomial degree d; if d=65536, use the 9bit power-of-two path. If d>65536, use the d+1 power-of-two path")
-	pFlag := flag.Uint64("p", 512, "message modulus p for the LWE-style encoded slot values")
-	TFlag := flag.Uint64("T", 65537, "BFV plaintext modulus T; must be prime and satisfy T = 2N*k + 1")
-	logQFlag := flag.String("logq", "", "comma-separated LogQ bit sizes")
-	logPFlag := flag.String("logp", "", "comma-separated LogP bit sizes")
-	msgFlag := flag.String("msg", "", "comma-separated plaintext messages m_i in Z_p of length m")
-	randomMsgFlag := flag.Bool("random-msg", false, "use a random message vector in Z_p when -msg is not provided")
-	msgSeedFlag := flag.Int64("msg-seed", 12345, "random seed used for the plaintext messages when -random-msg is set")
-	noiseSigmaFlag := flag.Float64("noise-sigma", 3.2, "standard deviation of the truncated discrete Gaussian noise e_i")
-	noiseSeedFlag := flag.Int64("noise-seed", 54321, "random seed used for the slot noise e_i")
-	lweASeedFlag := flag.Int64("lwe-a-seed", 314159, "random seed used for the public LWE a_i vectors")
-	funcSpecFlag := flag.String("func", "random", "function f: random|identity|square|cube|neg|affine:a,b|table")
-	funcTableFlag := flag.String("func-table", "", "comma-separated lookup-table values for f over Z_p")
-	funcFileFlag := flag.String("func-file", "", "path to a text file containing p lookup-table values for f")
-	funcSeedFlag := flag.Int64("func-seed", 20260402, "base seed used when random functions are generated")
-	secretFlag := flag.String("secret", "", "optional ternary LWE secret vector of length n, entries in {-1,0,1}")
-	secretSeedFlag := flag.Int64("secret-seed", 67890, "random seed used for the LWE secret when -secret is not provided")
-	dropBeforeLTFlag := flag.Bool("drop-before-lt", true, "for Algorithm 5: drop the level of ctP before ParallelLT so that its output matches ctG level")
-	ltDropLevelFlag := flag.Int("lt-drop-level", -1, "drop level before ParallelLT; -1 keeps existing behavior")
-	ltPostLevelFlag := flag.Int("lt-post-level", 2, "post-ParallelLT rescale target level; -1 disables")
-	alg5LTDropLevelFlag := flag.Int("alg5-lt-drop-levels", -999, "alias for Algorithm 5 LT drop level")
-	alg5LTPostLevelFlag := flag.Int("alg5-lt-post-levels", -999, "alias for Algorithm 5 LT post-rescale target level")
-	ltPrecomputeTermMasksFlag := flag.Bool("lt-precompute-term-masks", false, "for the large-parameter Algorithm 5 branch, precompute LT plaintext term masks / shifted masks")
-	polyLTBabyStepsFlag := flag.Int("poly-lt-baby-steps", -1, "manual baby-step count g for the polynomial-evaluation LT BSGS split; <=0 uses automatic sqrt split")
-	polyLTGiantStepsFlag := flag.Int("poly-lt-giant-steps", -1, "manual giant-step count b for the polynomial-evaluation LT BSGS split; <=0 uses automatic sqrt split")
-	polyPrecomputeFlag := flag.Bool("poly-precompute-pt", false, "pre-encode polynomial-evaluation plaintexts for Algorithm 5; default false to save memory")
-	gammaCompFlag := flag.Bool("gamma-compensate", true, "apply the gamma^{-1} correction before external modulus switching")
-	scaleCompFlag := flag.Bool("scale-compensate", true, "apply the inverse of the SlotToCoeff ciphertext scale modulo T before BFV modulus switching")
-	depthSlackFlag := flag.Int("depth-slack", 0, "adjust the automatic required-depth estimate; negative values relax the pre-check")
-	polyNoiseTraceFlag := flag.Bool("poly-noise-trace", false, "print exact decrypted coefficient-noise for each major step inside the LUT polynomial evaluation")
-	polyNoisePreviewFlag := flag.Int("poly-noise-preview", 8, "number of coefficient-noise samples shown for each polynomial-evaluation step")
-	progressFlag := flag.Bool("progress", true, "print stage-by-stage progress logs during long runs")
-	progressBlocksFlag := flag.Bool("progress-blocks", true, "print finer-grained progress inside polynomial evaluation blocks")
-	gcEveryFlag := flag.Int("gc-every", 0, "after clearing per-run references, explicitly run Go GC every k runs; 0 disables explicit GC and relies on Go's automatic GC")
-	freeOSMemoryFlag := flag.Bool("free-os-memory", false, "when an explicit run-level GC is triggered, also ask Go to return idle heap pages to the OS; useful on memory-limited Windows/VM runs but slower")
+	NFlag := flag.Int("N", 0, "required: BFV ring degree / slot count N")
+	mFlag := flag.Int("m", 0, "required: number of logical sparse messages m")
+	degreeFlag := flag.Int("degree", 0, "required: polynomial degree to evaluate; supports degree+1 pow2 or degree pow2 split-top")
+	TFlag := flag.Uint64("T", 0, "required: BFV plaintext modulus")
+	logQFlag := flag.String("logq", "", "required: LogQ bit-size list, supports forms like 40x3,47x16")
+	logPFlag := flag.String("logp", "", "required: LogP bit-size list")
+	inputFlag := flag.String("x", "", "comma-separated raw input values in Z_T of length m; used when -input-mode=raw, or as explicit phase values when -input-mode=phase-raw")
+	inputSeedFlag := flag.Int64("input-seed", 12345, "base seed for random raw inputs or random messages; run i uses base+i")
+	inputModeFlag := flag.String("input-mode", "phase", "input mode: phase directly encrypts RLWE slots x=Delta*m+e; lwe first generates LWE ciphertexts and homomorphically converts them to sparse RLWE slots by paper Step 1; Scheme-D does not scale the input, only the LUT output")
+	lweToRLWEFlag := flag.Bool("lwe-to-rlwe", true, "alias for -input-mode=lwe: generate LWE ciphertexts and homomorphically decrypt/pack them into sparse RLWE slots before polynomial evaluation")
+	lweStep1RescaleLevelsFlag := flag.Int("lwe-step1-rescale-levels", 1, "when -lwe-to-rlwe is enabled, immediately rescale/drop this many top Q levels after Step 1 before polynomial evaluation")
+	messageFlag := flag.String("message", "", "comma-separated messages m_i in Z_p for -input-mode=phase; default deterministic random; explicit messages are reused across runs")
+	phaseErrorFlag := flag.String("phase-error", "", "comma-separated signed input phase errors e_i for -input-mode=phase; explicit errors are reused across runs")
+	phaseErrorSigmaFlag := flag.Float64("phase-error-sigma", 3.2, "stddev for rounded Gaussian input phase error e_i in x=Delta*m_i+e_i; 0 gives noise-free phase")
+	phaseErrorSeedFlag := flag.Int64("phase-error-seed", 20260614, "base seed for random input phase errors; run i uses base+i")
+	phaseErrorBoundFlag := flag.Int64("phase-error-bound", -1, "exclusive bound |e_i| < bound for random phase errors; -1 uses Delta/2")
+	coeffModeFlag := flag.String("coeff-mode", "lut", "polynomial coefficients: random or lut")
+	coeffSeedFlag := flag.Int64("coeff-seed", 20260613, "base seed for random polynomial coefficients; run i uses base+i when coeff-mode=random")
+	pFlag := flag.Uint64("p", 0, "required: message modulus p for coeff-mode=lut")
+	funcSpecFlag := flag.String("func", "", "required: function for coeff-mode=lut: random|identity|square|cube|neg|affine:a,b|table")
+	funcTableFlag := flag.String("func-table", "", "inline function table for coeff-mode=lut; reused across runs")
+	funcFileFlag := flag.String("func-file", "", "function table file; reused across runs")
+	funcSeedFlag := flag.Int64("func-seed", 20260402, "base random function seed; run i uses base+i when the function is random")
+	precomputeFlag := flag.Bool("poly-precompute-pt", true, "precompute polynomial plaintexts for Algorithm 5; plaintexts are encoded at the operation level, and the large branch precomputes only BatchLT masks")
+	dropBeforeLTFlag := flag.Bool("drop-before-lt", true, "drop ct1/ctP before ParallelLT; default policy drops to ct2.Level()")
+	ltLevelFlag := flag.Int("lt-level", -2, "level at which ParallelLT/BatchLT is evaluated; default -2 means auto ct2.Level()+1, -1 means fast auto ct2.Level(), >=0 sets a manual level")
+	ltDropLevelFlag := flag.Int("lt-drop-level", -1, "deprecated alias for -lt-level; ignored when -lt-level is set")
+	ltPostLevelFlag := flag.Int("lt-post-level", -2, "post-ParallelLT rescale target level; default -2 means auto ct2.Level(), -1 disables, >=0 sets a manual level")
+	ltScaleAfterMulFlag := flag.Bool("lt-scale-after-mul", false, "experimental: skip post-ParallelLT rescale and let the following ct3*ct2 multiplication do the scale/rescale")
+	finalLevelFlag := flag.Int("final-level", 0, "target level for the final output ciphertext after polynomial evaluation; 0 leaves only the base Q prime, -1 disables")
+	polyNoiseTraceFlag := flag.Bool("poly-noise-trace", false, "print exact decrypted coefficient-noise for major polynomial-evaluation steps")
+	polyNoisePreviewFlag := flag.Int("poly-noise-preview", 4, "number of coefficient-noise samples shown per major step")
+	mulTraceFlag := flag.Bool("mul-trace", false, "print operation-level level/Qbits timing diagnostics for multiplications, rotate-and-add, and selected checkpoints")
+	mulTraceNoiseFlag := flag.Bool("mul-trace-noise", false, "with -mul-trace, also decrypt/decode after every logged operation to fill noiseBudget/max|noise| columns; very slow")
+	mulTraceSummaryOnlyFlag := flag.Bool("mul-trace-summary-only", false, "with -mul-trace, print only the operation summary instead of all per-row trace lines")
+	progressFlag := flag.Bool("progress", false, "print progress logs")
+	progressBlocksFlag := flag.Bool("progress-blocks", false, "print fine-grained block progress")
+	schemeDFlag := flag.Bool("scheme-d", true, "use Scheme-D output scaling")
+	extractLWEFlag := flag.Bool("extract-lwe", true, "after polynomial evaluation, run sparse SlotToCoeff, rescale to Q'=Q[0], final key switch, SampleExtract, and Q'->T LWE modulus switch")
+	qprimeKSNoiseFlag := flag.Bool("qprime-ks-noise", true, "when -extract-lwe, print Qprime-domain noise before final key switch, after final key switch, and after SampleExtract for verbose single-run output")
+	outputNoiseTableFlag := flag.Bool("output-noise-table", false, "print a per-output LWE noise table after Qprime->T; also printed automatically on final LWE failure")
+	outputNoiseTableLimitFlag := flag.Int("output-noise-table-limit", 64, "maximum number of rows printed by -output-noise-table; <=0 means all rows")
+	ct2NoiseProbeFlag := flag.Bool("ct2-noise-probe", false, "print only the immediate c2/ct2 grouped-powers noise probe even when the full -poly-noise-trace is off")
+	stcBufferLevelFlag := flag.Int("stc-buffer-level", 0, "when -extract-lwe is used, first rescale the post-StC/no-StC tail ciphertext to this positive buffer level, then rescale to Q'=Q[0]; 0 disables the two-step tail")
+	skipStCM1Flag := flag.Bool("skip-stc-m1", true, "when -extract-lwe and m=1, skip sparse SlotToCoeff because all slots are already the constant polynomial")
+	m1ScaleFixFlag := flag.Bool("m1-scale-fix", true, "when -skip-stc-m1 and Scheme-D, multiply the m=1 polynomial output by gamma^{-1} if needed")
+	m1AbsorbGammaInPolyFlag := flag.Bool("m1-absorb-gamma-in-poly", true, "for Scheme-D with m=1 and -skip-stc-m1, absorb the final gamma^{-1} into the polynomial/LUT coefficients; m>1 polynomials are not modified")
+	deferPointwiseRescaleFlag := flag.Bool("defer-pointwise-rescale", true, "for Algorithm 5, compute ct3*ct2 with relin but without rescale, run RotateAndSum at that level, then rescale once after RotateAndSum; applies to m=1 and m>1")
+	m1DeferPointwiseRescaleFlag := flag.Bool("m1-defer-pointwise-rescale", true, "deprecated compatibility alias for -defer-pointwise-rescale; set false to disable deferred pointwise rescale")
+	m1GammaOneQFlag := flag.Bool("m1-gamma-one-q", false, "when -skip-stc-m1 and m=1, replace Q[1] by a special NTT prime so the final m=1 gamma is 1 and the scale-fix plaintext multiplication is skipped")
+	m1GammaOnePrevGammaInvFlag := flag.Uint64("m1-gamma-one-prev-gamma-inv", 0, "optional legacy/debug input: previous run's printed gamma^{-1} modulo T; if omitted, the program predicts it from the planned scale and computes Q[1] automatically")
+	m1GammaOneTargetResidueFlag := flag.Uint64("m1-gamma-one-target-residue", 0, "manual target residue for the special Q[1] modulo T; overrides the automatic m=1 gamma-one computation")
+	m1GammaOneQMaxExtraBitsFlag := flag.Int("m1-gamma-one-q-max-extra-bits", 12, "maximum number of extra bits allowed when searching the special m=1 gamma-one Q[1] modulus")
+	lweNFlag := flag.Int("lwe-n", 0, "required: output LWE secret dimension for the final extracted ciphertexts")
+	lweSecretFlag := flag.String("lwe-secret", "sparseternary", "LWE secret distribution: sparseternary, fixedweight, ternary, or sign")
+	lweHFlag := flag.Int("lwe-h", 0, "required: Hamming weight for -lwe-secret sparseternary/fixedweight")
+	lweSecretSeedFlag := flag.Int64("lwe-secret-seed", 20260615, "PRNG seed for the LWE secret and final key-switch randomness stream")
+	lweASeedFlag := flag.Int64("lwe-a-seed", 20260616, "base PRNG seed for uniformly random a-vectors of generated input LWE ciphertexts; run i uses base+i")
+	ksBaseLogFlag := flag.Int("ks-base-log", 2, "base-2 gadget decomposition log for the final Q'-only no-P key switch")
+	ksCenteredFlag := flag.Bool("ks-centered", true, "use centered signed gadget digits for the final Q'-only key switch; requires -ks-base-log >= 2")
+	finalKSSigmaFlag := flag.Float64("final-ks-sigma", 3.2, "Gaussian stddev for manual final Q'-only key-switch key")
+	levelAwareKeysFlag := flag.Bool("level-aware-keys", true, "generate evaluation keys only up to the maximum Q level where each key is used")
+	keyLevelSummaryFlag := flag.Bool("key-level-summary", true, "print the level distribution and size of generated relinearization/Galois keys")
+	runsFlag := flag.Int("run", 1, "number of online benchmark runs; parameters, BFV secret key, evaluation keys, and the LWE secret are generated once")
+	runVerboseFlag := flag.Bool("run-verbose", false, "with -run > 1, print the detailed per-run diagnostic blocks instead of only compact per-run summaries")
+	gcEveryFlag := flag.Int("gc-every", 0, "after clearing per-run references, explicitly run Go GC every k runs; 0 disables explicit run-level GC")
+	freeOSMemoryFlag := flag.Bool("free-os-memory", false, "when explicit run-level GC is triggered, also ask Go to return idle heap pages to the OS")
 	memProgressFlag := flag.Bool("mem-progress", false, "print Go heap statistics before and after explicit run-level GC")
-	leveledRotationKeysFlag := flag.Bool("leveled-rotation-keys", true, "generate rotation/Galois keys at the highest ciphertext level where each rotation is used; false keeps the previous full-level behavior")
-	finalKSLevelPFlag := flag.Int("final-ks-level-p", -1, "LevelP for the final BFV key switch: -1 uses no P with a Q-only parameter view; 0 uses one P prime; higher values use more P primes")
-	finalKSPow2BaseFlag := flag.Int("final-ks-pow2-base", 8, "base-2 decomposition bit width for the final key-switch key; <=0 disables bit decomposition")
-	runsFlag := flag.Int("run", 1, "number of benchmark runs; key generation is done once and the online phase is repeated")
 	flag.Parse()
+	if rest := flag.Args(); len(rest) > 0 {
+		panic(fmt.Sprintf("unexpected positional argument(s) after flags: %v; did you forget a leading '-' before a flag name?", rest))
+	}
 
-	globalProgress = newProgressLogger(*progressFlag)
-	globalProgressBlocks = *progressBlocksFlag
-	globalPolyLTBabySteps = *polyLTBabyStepsFlag
-	globalPolyLTGiantSteps = *polyLTGiantStepsFlag
-
+	seenFlags := map[string]bool{}
+	flag.Visit(func(f *flag.Flag) { seenFlags[f.Name] = true })
+	requiredCoreFlags := []string{"N", "m", "degree", "T", "p", "func", "logq", "logp", "lwe-n", "lwe-h"}
+	missingCoreFlags := make([]string, 0)
+	for _, name := range requiredCoreFlags {
+		if !seenFlags[name] {
+			missingCoreFlags = append(missingCoreFlags, "-"+name)
+		}
+	}
+	if len(missingCoreFlags) > 0 {
+		panic(fmt.Sprintf("missing required core flag(s): %s. Keep these explicit; all other flags use optimized defaults.", strings.Join(missingCoreFlags, ", ")))
+	}
 	if *runsFlag < 1 {
 		panic("-run must be at least 1")
 	}
+	if *mulTraceNoiseFlag && !*mulTraceFlag {
+		*mulTraceFlag = true
+	}
+	globalMulTraceSummaryOnly = *mulTraceSummaryOnlyFlag
+	globalCt2NoiseProbe = *ct2NoiseProbeFlag || *polyNoiseTraceFlag
+	globalDeferPointwiseRescale = *deferPointwiseRescaleFlag && *m1DeferPointwiseRescaleFlag
+	if *stcBufferLevelFlag < 0 {
+		panic(fmt.Sprintf("-stc-buffer-level must be >= 0, got %d", *stcBufferLevelFlag))
+	}
+	if *lweStep1RescaleLevelsFlag < 0 {
+		panic(fmt.Sprintf("-lwe-step1-rescale-levels must be >= 0, got %d", *lweStep1RescaleLevelsFlag))
+	}
+	if *ltLevelFlag < ltLevelExtraCT2Level {
+		panic(fmt.Sprintf("-lt-level must be -2, -1, or >= 0, got %d", *ltLevelFlag))
+	}
+	if *ltDropLevelFlag < ltLevelExtraCT2Level {
+		panic(fmt.Sprintf("-lt-drop-level must be -2, -1, or >= 0, got %d", *ltDropLevelFlag))
+	}
+	if *ltPostLevelFlag < ltPostAutoCT2Level {
+		panic(fmt.Sprintf("-lt-post-level must be -2, -1, or >= 0, got %d", *ltPostLevelFlag))
+	}
+	if *ksCenteredFlag && *ksBaseLogFlag < 2 {
+		panic("-ks-centered requires -ks-base-log >= 2")
+	}
+
+	globalProgress = newProgressLogger(*progressFlag)
+	globalProgressBlocks = *progressBlocksFlag
 
 	N := *NFlag
 	m := *mFlag
-	nLWE := *nFlag
-	userD := *dFlag
-	if userD < 0 {
-		panic(fmt.Sprintf("d=%d must be non-negative", userD))
-	}
-	use9BitPow2Mode := userD == 65536
-	var d int
-	if use9BitPow2Mode {
-		d = userD
-	} else {
-		d = userD + 1
-	}
+	degree := *degreeFlag
 	T := *TFlag
-	var err error
-
 	if !isPow2(N) {
 		panic(fmt.Sprintf("N=%d must be a power of two", N))
 	}
 	if !isPow2(m) {
 		panic(fmt.Sprintf("m=%d must be a power of two", m))
 	}
-	if !isPow2(d) {
-		if use9BitPow2Mode {
-			panic(fmt.Sprintf("in 9bit mode need d=%d to be a power of two", d))
-		}
-		panic(fmt.Sprintf("need d+1 to be a power of two, got d=%d and d+1=%d", userD, d))
-	}
-	if m > N/2 {
-		panic(fmt.Sprintf("need m <= N/2, got m=%d, N=%d", m, N))
-	}
 	if N%m != 0 {
-		panic(fmt.Sprintf("need m | N, got m=%d, N=%d", m, N))
-	}
-	if nLWE <= 0 || nLWE > N {
-		panic(fmt.Sprintf("need 1 <= n <= N, got n=%d, N=%d", nLWE, N))
+		panic(fmt.Sprintf("m=%d must divide N=%d", m, N))
 	}
 	if T%(2*uint64(N)) != 1 {
-		panic(fmt.Sprintf("plaintext modulus T=%d must satisfy T ≡ 1 (mod 2N=%d)", T, 2*N))
+		panic(fmt.Sprintf("T=%d must satisfy T = 1 mod 2N=%d", T, 2*N))
 	}
-	if !new(big.Int).SetUint64(T).ProbablyPrime(32) {
-		panic(fmt.Sprintf("BFV plaintext modulus T=%d must be prime", T))
-	}
-	if use9BitPow2Mode {
-		if !isPow2(int(T - 1)) {
-			panic(fmt.Sprintf("9bit mode requires T-1 to be a power of two, got T=%d", T))
-		}
-		if d != int(T-1) {
-			panic(fmt.Sprintf("9bit mode requires d = T-1 = %d, got d=%d", int(T-1), d))
-		}
-	} else {
-		if userD < int(T-1) {
-			panic(fmt.Sprintf("input degree d=%d is too small: the LUT polynomial has degree at most T-1=%d, so need d >= T-1", userD, int(T-1)))
-		}
+	logN := log2Pow2(N)
+	r := N / m
+	inputModeNorm := strings.ToLower(strings.TrimSpace(*inputModeFlag))
+	useLWEInput := isLWEToRLWEInputMode(inputModeNorm) || *lweToRLWEFlag
+	phaseBuilderMode := inputModeNorm
+	if useLWEInput {
+		phaseBuilderMode = "phase"
 	}
 
-	step := (N / 2) / m
-	r := N / m
-	logN := log2Pow2(N)
-	singleSlotDirect := m == 1 && d <= r
-	if !singleSlotDirect && (d <= r || d > r*r || d%r != 0) {
-		panic(fmt.Sprintf("Algorithm 5 requires r < d <= r^2 and r|d unless m=1 uses the direct path, got d=%d, r=%d, m=%d", d, r, m))
+	placeholder := make([]uint64, degree+1)
+	_, _, lowerLen, splitTop, err := splitPolynomialForAlg5(placeholder, degree, m)
+	if err != nil {
+		panic(err)
 	}
-	var requiredDepth int
-	if singleSlotDirect {
-		requiredDepth = monomialConsumedDepth(d) + 2
+	if !(m == 1 && lowerLen <= r) && (lowerLen <= r || lowerLen > r*r || lowerLen%r != 0) {
+		panic(fmt.Sprintf("Algorithm 5 requires r < lowerLen <= r^2 and r|lowerLen unless m=1 direct path, got lowerLen=%d r=%d m=%d", lowerLen, r, m))
+	}
+	requiredDepth := 1
+	if m == 1 && lowerLen <= r {
+		requiredDepth = monomialConsumedDepth(lowerLen) + 2
 	} else {
-		requiredDepth, err = autoDepthForWrappedPolyEval(r, d)
+		requiredDepth, err = autoDepthForWrappedPolyEval(r, lowerLen)
 		if err != nil {
 			panic(err)
 		}
 	}
-	requiredDepth++
-	if m == 1 {
-		requiredDepth--
+	if useLWEInput && *lweStep1RescaleLevelsFlag > 0 {
+		requiredDepth += *lweStep1RescaleLevelsFlag
 	}
-	requiredDepth += *depthSlackFlag
-	if requiredDepth < 1 {
-		requiredDepth = 1
+	if *extractLWEFlag {
+		if *stcBufferLevelFlag > 0 {
+			requiredDepth += *stcBufferLevelFlag
+		} else if *skipStCM1Flag && m == 1 && requiredDepth > 0 {
+			requiredDepth--
+		}
 	}
 
-	var autoLiteral bfv.ParametersLiteral
+	var logQBits, logPBits []int
 	if strings.TrimSpace(*logQFlag) == "" || strings.TrimSpace(*logPFlag) == "" {
 		prof, err := chooseAutoProfileForLogNDepth(logN, requiredDepth)
 		if err != nil {
 			panic(err)
 		}
-		autoLiteral, err = prof.BuildLiteral(requiredDepth, T)
+		autoLit, err := prof.BuildLiteral(requiredDepth, T)
 		if err != nil {
 			panic(err)
 		}
+		if strings.TrimSpace(*logQFlag) == "" {
+			logQBits = append([]int(nil), autoLit.LogQ...)
+		}
+		if strings.TrimSpace(*logPFlag) == "" {
+			logPBits = append([]int(nil), autoLit.LogP...)
+		}
 	}
-	var logQBits, logPBits []int
-	if strings.TrimSpace(*logQFlag) == "" {
-		logQBits = append([]int(nil), autoLiteral.LogQ...)
-	} else {
-		logQBits, err = parseBitList(*logQFlag)
+	if strings.TrimSpace(*logQFlag) != "" {
+		logQBits, err = parseBitListExpanded(*logQFlag)
 		if err != nil {
 			panic(fmt.Errorf("invalid -logq: %w", err))
 		}
 	}
-	if strings.TrimSpace(*logPFlag) == "" {
-		logPBits = append([]int(nil), autoLiteral.LogP...)
-	} else {
-		logPBits, err = parseBitList(*logPFlag)
+	if strings.TrimSpace(*logPFlag) != "" {
+		logPBits, err = parseBitListExpanded(*logPFlag)
 		if err != nil {
 			panic(fmt.Errorf("invalid -logp: %w", err))
 		}
 	}
 	if len(logQBits)-1 < requiredDepth {
-		panic(fmt.Sprintf("insufficient LogQ chain: MaxLevel=%d but this run with Algorithm 5, N=%d, m=%d, d=%d needs at least %d levels; pass a longer -logq or leave -logq empty for automatic selection", len(logQBits)-1, N, m, d, requiredDepth))
+		panic(fmt.Sprintf("insufficient LogQ: MaxLevel=%d, requiredDepth=%d", len(logQBits)-1, requiredDepth))
 	}
 	literal, err := chooseLiteral(logN, T, logQBits, logPBits)
 	if err != nil {
@@ -5603,713 +8374,2289 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	if params.MaxSlots() != N {
-		panic(fmt.Sprintf("constructed parameters have MaxSlots=%d, but requested N=%d", params.MaxSlots(), N))
+
+	skipStCForM1 := *skipStCM1Flag && m == 1
+	m1AbsorbGammaEnabled := *m1AbsorbGammaInPolyFlag && *schemeDFlag && *extractLWEFlag && skipStCForM1
+	if m1AbsorbGammaEnabled && *m1GammaOneQFlag {
+		fmt.Println("m=1 gamma absorb note     : -m1-absorb-gamma-in-poly=true, so -m1-gamma-one-q is ignored; the polynomial is pre-scaled instead of changing Q[1]")
+		*m1GammaOneQFlag = false
 	}
-	if params.MaxLevel() < requiredDepth {
-		panic(fmt.Sprintf("insufficient BFV depth: MaxLevel=%d but this run needs at least %d", params.MaxLevel(), requiredDepth))
+	effectiveLTLevel := *ltLevelFlag
+	if effectiveLTLevel < 0 && *ltDropLevelFlag >= 0 {
+		effectiveLTLevel = *ltDropLevelFlag
+	}
+	effectiveLTPostLevel := *ltPostLevelFlag
+	leadingTermEvaluated := !useLargeAlg5Branch(N, m, lowerLen)
+
+	var m1GammaOneInfo *M1GammaOneQInfo
+	if *m1GammaOneQFlag {
+		if !(*extractLWEFlag && *schemeDFlag && skipStCForM1) {
+			panic("-m1-gamma-one-q requires -extract-lwe=true, -scheme-d=true, -skip-stc-m1=true, and m=1")
+		}
+		planForM1 := newRotationKeyPlan()
+		polyInputLevelForM1 := params.MaxLevel()
+		if useLWEInput {
+			polyInputLevelForM1 -= *lweStep1RescaleLevelsFlag
+		}
+		polyLevelInfoForM1, err := addPolyEvalRotationKeyUses(params, planForM1, polyInputLevelForM1, m, lowerLen, *dropBeforeLTFlag, effectiveLTLevel, effectiveLTPostLevel, *ltScaleAfterMulFlag, leadingTermEvaluated)
+		if err != nil {
+			panic(fmt.Errorf("m=1 gamma-one level planning failed: %w", err))
+		}
+		polyInputScaleForM1, err := estimatePolynomialInputScaleModT(params, polyInputLevelForM1, useLWEInput, T)
+		if err != nil {
+			panic(fmt.Errorf("m=1 gamma-one input-scale planning failed: %w", err))
+		}
+		autoTargetResidue, autoOutputScale, autoTailRestProduct, autoOldGamma, autoOldGammaInv, err := estimateM1GammaOneQ1TargetResidue(params, T, m, lowerLen, polyInputLevelForM1, polyInputScaleForM1, *dropBeforeLTFlag, effectiveLTLevel, effectiveLTPostLevel, *ltScaleAfterMulFlag, leadingTermEvaluated, polyLevelInfoForM1.OutputLevel)
+		if err != nil {
+			panic(fmt.Errorf("m=1 gamma-one automatic residue computation failed: %w", err))
+		}
+		literal, logQBits, m1GammaOneInfo, err = specializeM1GammaOneQFromObservedGamma(params, literal, logQBits, logN, T, m, polyLevelInfoForM1.OutputLevel, *m1GammaOnePrevGammaInvFlag, *m1GammaOneTargetResidueFlag, autoTargetResidue, autoOutputScale, autoTailRestProduct, autoOldGamma, autoOldGammaInv, *m1GammaOneQMaxExtraBitsFlag)
+		if err != nil {
+			panic(fmt.Errorf("m=1 gamma-one Q selection failed: %w", err))
+		}
+		params, err = bfv.NewParametersFromLiteral(literal)
+		if err != nil {
+			panic(fmt.Errorf("rebuild parameters with m=1 gamma-one Q[1]: %w", err))
+		}
 	}
 
-	alg5LTDropLevel := *ltDropLevelFlag
-	alg5LTPostLevel := *ltPostLevelFlag
-	if *alg5LTDropLevelFlag != -999 {
-		alg5LTDropLevel = *alg5LTDropLevelFlag
-	}
-	if *alg5LTPostLevelFlag != -999 {
-		alg5LTPostLevel = *alg5LTPostLevelFlag
-	}
-	if err := validateLTLevel(alg5LTDropLevel, params.MaxLevel(), "alg5-lt-drop-levels"); err != nil {
-		panic(err)
-	}
-	if err := validateLTLevel(alg5LTPostLevel, params.MaxLevel(), "alg5-lt-post-levels"); err != nil {
-		panic(err)
-	}
-	rp := params.GetRLWEParameters()
-
-	pMsg := *pFlag
-	if pMsg == 0 {
-		panic("p must be positive")
-	}
-	if pMsg >= T {
-		panic(fmt.Sprintf("need p < T, got p=%d, T=%d", pMsg, T))
-	}
-	alpha := T / pMsg
-	if alpha == 0 {
-		panic(fmt.Sprintf("alpha=floor(T/p)=0 for T=%d, p=%d", T, pMsg))
-	}
-	noiseBound := int64(T / (2 * pMsg))
-	if noiseBound <= 0 {
-		panic(fmt.Sprintf("invalid noise bound floor(T/(2p))=%d for T=%d, p=%d", noiseBound, T, pMsg))
-	}
-
-	msgParsed, err := parseVector(*msgFlag)
-	if err != nil {
-		panic(err)
-	}
-	var msgMod []uint64
-	if len(msgParsed) == 0 {
-		if *randomMsgFlag {
-			msgMod = makeRandomMessages(m, pMsg, *msgSeedFlag)
-		} else {
-			msgMod = makeDefaultMessages(m, pMsg)
-		}
-	} else {
-		if len(msgParsed) != m {
-			panic(fmt.Sprintf("len(msg)=%d does not match m=%d", len(msgParsed), m))
-		}
-		msgMod = make([]uint64, m)
-		for i, v := range msgParsed {
-			msgMod[i] = toUintMod(v, pMsg)
-		}
-	}
-	explicitMsgVector := len(msgParsed) != 0
-	secretParse, err := parseVector(*secretFlag)
-	if err != nil {
-		panic(err)
-	}
-	var lweSecret []int64
-	if len(secretParse) == 0 {
-		lweSecret = randomTernary(nLWE, *secretSeedFlag)
-	} else {
-		if len(secretParse) != nLWE {
-			panic(fmt.Sprintf("len(secret)=%d does not match n=%d", len(secretParse), nLWE))
-		}
-		if err := validateTernary(secretParse); err != nil {
-			panic(err)
-		}
-		lweSecret = append([]int64(nil), secretParse...)
-	}
 	encoder := bfv.NewEncoder(params)
+	qPrime := params.Q()[0]
+	schemeDTargetScale := uint64(0)
+	schemeDScaleS := uint64(1)
+	schemeDInvS := uint64(1)
+	if *schemeDFlag {
+		schemeDTargetScale, schemeDScaleS, err = tailSchemeDScale(qPrime, T)
+		if err != nil {
+			panic(err)
+		}
+		schemeDInvS, err = tailInvModUint64(schemeDScaleS, T)
+		if err != nil {
+			panic(err)
+		}
+	}
 
-	oneTimeStart := time.Now()
-	skipSlotToCoeff := m == 1
-	var basisTime, diagTime, slotPTTime time.Duration
-	var preSlotLT *PreprocessedBSGSPlaintexts
-	rotationShifts := []int{}
-	if !skipSlotToCoeff {
-		buildBasisStart := time.Now()
-		_, matrixUmod, _, err := buildBasisMatrixU(params, encoder, N, m, T)
+	var step1Plan LWEToRLWEPackingPlan
+	if useLWEInput {
+		if *lweNFlag <= 0 || *lweNFlag > N {
+			panic(fmt.Sprintf("-input-mode=lwe requires -lwe-n in [1,N], got lwe-n=%d, N=%d", *lweNFlag, N))
+		}
+		step1Plan, err = planLWEToRLWEStep1(N, m, *lweNFlag)
 		if err != nil {
 			panic(err)
 		}
-		basisTime = time.Since(buildBasisStart)
-		buildDiagStart := time.Now()
-		diagMod, _ := buildRightMulDiagonals(matrixUmod, T)
-		diagExtMod := make([][]uint64, m)
-		for j := 0; j < m; j++ {
-			diagExtMod[j] = repeatVector(diagMod[j], r)
-		}
-		diagTime = time.Since(buildDiagStart)
-		preSlotPlainStart := time.Now()
-		preSlotLT, err = preprocessSlotToCoeffBSGSPlaintexts(params, encoder, diagExtMod)
-		if err != nil {
-			panic(err)
-		}
-		slotPTTime = time.Since(preSlotPlainStart)
-		rotationShifts = uniqueRotationShiftsForBSGS(m)
 	}
-	legacyGalSet := map[uint64]struct{}{}
-	for _, shift := range rotationShifts {
-		if shift != 0 {
-			legacyGalSet[params.GaloisElementForColRotation(shift)] = struct{}{}
-		}
-	}
-	polyGalEls, err := collectPolyEvalGaloisElements(params, m, d)
-	if err != nil {
-		panic(err)
-	}
-	for _, ge := range polyGalEls {
-		legacyGalSet[ge] = struct{}{}
-	}
-	inputPackGalEls := requiredGaloisElementsForFinalSum(params, m, r)
-	for _, ge := range inputPackGalEls {
-		legacyGalSet[ge] = struct{}{}
-	}
-	legacyGalEls := make([]uint64, 0, len(legacyGalSet))
-	for ge := range legacyGalSet {
-		legacyGalEls = append(legacyGalEls, ge)
-	}
-	sort.Slice(legacyGalEls, func(i, j int) bool { return legacyGalEls[i] < legacyGalEls[j] })
 
 	rotationPlan := newRotationKeyPlan()
-	packRotationLevel := params.MaxLevel() - 1
-	if err := addSparseRotateAndSumKeyUses(params, rotationPlan, m, r, packRotationLevel, "pack LWE->BFV"); err != nil {
-		panic(err)
+	polyInputLevelForPlan := params.MaxLevel()
+	if useLWEInput {
+		polyInputLevelForPlan -= *lweStep1RescaleLevelsFlag
 	}
-	leadingTermEvaluated := use9BitPow2Mode || !useLargeAlg5Branch(N, m, d)
-	polyLevelInfo, err := addPolyEvalRotationKeyUses(params, rotationPlan, m, d, *dropBeforeLTFlag, alg5LTDropLevel, alg5LTPostLevel, leadingTermEvaluated)
+	if polyInputLevelForPlan < 0 {
+		panic(fmt.Sprintf("polynomial input level became negative: MaxLevel=%d, lwe-step1-rescale-levels=%d", params.MaxLevel(), *lweStep1RescaleLevelsFlag))
+	}
+	polyLevelInfo, err := addPolyEvalRotationKeyUses(params, rotationPlan, polyInputLevelForPlan, m, lowerLen, *dropBeforeLTFlag, effectiveLTLevel, effectiveLTPostLevel, *ltScaleAfterMulFlag, leadingTermEvaluated)
 	if err != nil {
 		panic(err)
 	}
-	if !skipSlotToCoeff {
-		if err := addSlotToCoeffBSGSKeyUses(params, rotationPlan, m, polyLevelInfo.OutputLevel); err != nil {
-			panic(err)
+	var stcDiagExt [][]uint64
+	var stcStep int
+	if useLWEInput {
+		if err := addSparseRotateAndSumKeyUses(params, rotationPlan, m, step1Plan.InnerPeriod, params.MaxLevel(), "LWE->RLWE Step1 row-sum"); err != nil {
+			panic(fmt.Errorf("add LWE->RLWE Step1 rotation keys: %w", err))
 		}
 	}
-	addLegacyFullLevelFallbacks(params, rotationPlan, legacyGalEls, "legacy fallback")
-	if !*leveledRotationKeysFlag {
+	if *extractLWEFlag {
+		if *lweNFlag <= 0 || *lweNFlag > N {
+			panic(fmt.Sprintf("-lwe-n must be in [1,N], got lwe-n=%d, N=%d", *lweNFlag, N))
+		}
+		stcStep = (N / 2) / m
+		if !skipStCForM1 {
+			_, matrixU, _, err := buildBasisMatrixU(params, encoder, N, m, T)
+			if err != nil {
+				panic(fmt.Errorf("build sparse SlotToCoeff basis: %w", err))
+			}
+			diagMod, _ := buildRightMulDiagonals(matrixU, T)
+			stcDiagExt = make([][]uint64, len(diagMod))
+			for j := range diagMod {
+				stcDiagExt[j] = repeatVector(diagMod[j], r)
+			}
+			stcInputLevel := polyLevelInfo.OutputLevel
+			if stcInputLevel < 1 {
+				stcInputLevel = params.MaxLevel()
+			}
+			if err := addSlotToCoeffBSGSKeyUses(params, rotationPlan, m, stcInputLevel); err != nil {
+				panic(err)
+			}
+		}
+	}
+	if !*levelAwareKeysFlag {
 		rotationPlan.ForceLevel(params.MaxLevel())
 	}
 	galEls := rotationPlan.GaloisElements()
-	keygenStart := time.Now()
+	relinKeyLevel := polyInputLevelForPlan
+	if relinKeyLevel < 0 || relinKeyLevel > params.MaxLevel() || !*levelAwareKeysFlag {
+		relinKeyLevel = params.MaxLevel()
+	}
+
+	keyStart := time.Now()
 	kgen := rlwe.NewKeyGenerator(params)
 	sk := kgen.GenSecretKeyNew()
-	rlk := kgen.GenRelinearizationKeyNew(sk)
-	gks, rotationKeyLevelStats, rotationKeySizeBytes, err := generateGaloisKeysFromPlan(params, kgen, sk, rotationPlan)
+	relinLevelForKey := relinKeyLevel
+	rlk := kgen.GenRelinearizationKeyNew(sk, rlwe.EvaluationKeyParameters{LevelQ: &relinLevelForKey})
+	gks, rotationKeyLevelStats, galoisKeySizeBytes, err := generateGaloisKeysFromPlan(params, kgen, sk, rotationPlan)
 	if err != nil {
-		panic(err)
+		panic(fmt.Errorf("generate level-aware Galois keys: %w", err))
 	}
 	evaluationKeys := rlwe.NewMemEvaluationKeySet(rlk, gks...)
-	keygenTime := time.Since(keygenStart)
+	relinKeySizeBytes := int64(rlk.BinarySize())
+	evalKeySizeBytes := relinKeySizeBytes + galoisKeySizeBytes
+	keyTime := time.Since(keyStart)
 	enc := bfv.NewEncryptor(params, sk)
 	dec := bfv.NewDecryptor(params, sk)
-	evalPack := bfv.NewEvaluator(params, evaluationKeys, false)
-	evalPoly := bfv.NewEvaluator(params, evaluationKeys, false)
-	evalLT := bfv.NewEvaluator(params, evaluationKeys, false)
-	secretBlockPrepStart := time.Now()
-	secretBlockCTs, err := preprocessEncryptedSecretBlocks(params, encoder, enc, lweSecret, m)
-	if err != nil {
-		panic(err)
-	}
-	secretBlockPrepTime := time.Since(secretBlockPrepStart)
-	secretBlockSizeBytes := sumCiphertextBinarySize(secretBlockCTs)
-	finalKeySwitchLevelQ := 0
-	finalKeySwitchLevelP := *finalKSLevelPFlag
-	if finalKeySwitchLevelP < -1 {
-		panic(fmt.Sprintf("-final-ks-level-p must be -1 or non-negative, got %d", finalKeySwitchLevelP))
-	}
-	if finalKeySwitchLevelP >= 0 && finalKeySwitchLevelP > params.MaxLevelP() {
-		panic(fmt.Sprintf("-final-ks-level-p=%d exceeds MaxLevelP=%d", finalKeySwitchLevelP, params.MaxLevelP()))
-	}
-	finalKSEvalParams := params
-	if finalKeySwitchLevelP == -1 {
-		finalKSLiteral := bfv.ParametersLiteral{
-			LogN:             logN,
-			Q:                rp.Q(),
-			PlaintextModulus: T,
-		}
-		finalKSEvalParams, err = bfv.NewParametersFromLiteral(finalKSLiteral)
-		if err != nil {
-			panic(fmt.Errorf("failed to build Q-only parameters for final key switch: %w", err))
-		}
-	}
-	targetSecretStart := time.Now()
-	skTargetBFV := buildTargetBFVSecretKey(finalKSEvalParams, lweSecret)
-	targetSecretTime := time.Since(targetSecretStart)
-	skInputFinalKS := sk
-	if finalKeySwitchLevelP == -1 {
-		skInputFinalKS, err = cloneSecretKeyQOnly(finalKSEvalParams, sk)
-		if err != nil {
-			panic(fmt.Errorf("failed to clone the BFV secret key into the Q-only final-KS parameters: %w", err))
-		}
-	}
-	finalKSParams := rlwe.EvaluationKeyParameters{
-		LevelQ: &finalKeySwitchLevelQ,
-		LevelP: &finalKeySwitchLevelP,
-	}
-	if *finalKSPow2BaseFlag > 0 {
-		finalKSPow2Base := *finalKSPow2BaseFlag
-		finalKSParams.BaseTwoDecomposition = &finalKSPow2Base
-	}
-	evalKeyStart := time.Now()
-	kgenFinalKS := rlwe.NewKeyGenerator(finalKSEvalParams)
-	evkKS := kgenFinalKS.GenEvaluationKeyNew(skInputFinalKS, skTargetBFV, finalKSParams)
-	evalKeyTime := time.Since(evalKeyStart)
-	rlkSizeBytes := int64(rlk.BinarySize())
-	evalKeySizeBytes := int64(evkKS.BinarySize())
-	auxKeySizeBytes := rlkSizeBytes + rotationKeySizeBytes + evalKeySizeBytes
-	extractEval := bfv.NewEvaluator(finalKSEvalParams, rlwe.NewMemEvaluationKeySet(nil), true)
-	decTargetKS := bfv.NewDecryptor(finalKSEvalParams, skTargetBFV)
-	oneTimeTotal := time.Since(oneTimeStart)
+	eval := bfv.NewEvaluator(params, evaluationKeys, false)
 
-	fmt.Println("========== BFV Parameters ==========")
-	fmt.Printf("N                         : %d\n", N)
-	fmt.Printf("m                         : %d\n", m)
-	fmt.Printf("n (LWE dimension)         : %d\n", nLWE)
-	fmt.Printf("input degree d            : %d\n", userD)
-	if use9BitPow2Mode {
-		fmt.Printf("degree mode               : 9bit power-of-two path (d is a power of two)\n")
-	} else {
-		fmt.Printf("degree mode               : d+1 power-of-two path\n")
-		fmt.Printf("internal eval degree      : %d\n", d)
+	var fixedLWESecretSigned []int64
+	var fixedLWESecretInfo TailSecretInfo
+	var finalKSRng *rand.Rand
+	if useLWEInput || *extractLWEFlag {
+		finalKSRng = rand.New(rand.NewSource(*lweSecretSeedFlag))
+		fixedLWESecretSigned, fixedLWESecretInfo, err = tailSampleLWESecret(*lweNFlag, *lweSecretFlag, *lweHFlag, finalKSRng)
+		if err != nil {
+			panic(err)
+		}
 	}
-	fmt.Printf("poly-eval algorithm       : %s\n", PolyEvalAlg5)
-	fmt.Printf("poly LT baby steps        : %s\n", formatPolyLTBSGSSetting(globalPolyLTBabySteps))
-	fmt.Printf("poly LT giant steps       : %s\n", formatPolyLTBSGSSetting(globalPolyLTGiantSteps))
-	fmt.Printf("plaintext modulus T       : %d\n", T)
-	fmt.Printf("message modulus p         : %d\n", pMsg)
-	fmt.Printf("alpha=floor(T/p)          : %d\n", alpha)
-	fmt.Printf("MaxLevel                  : %d\n", params.MaxLevel())
-	fmt.Printf("LogQ bits                 : %v\n", literal.LogQ)
-	fmt.Printf("LogP bits                 : %v\n", literal.LogP)
-	fmt.Printf("Q factors                 : %v\n", rp.Q())
-	fmt.Printf("P factors                 : %v\n", rp.P())
+
+	fmt.Println("========== One-time setup ==========")
+	fmt.Printf("parameters                 : LogN=%d, N=%d, m=%d, r=%d, T=%d\n", logN, N, m, r, T)
+	fmt.Printf("LogQ / LogP                : %v / %v\n", logQBits, logPBits)
+	fmt.Printf("initial ciphertext modulus : L%d/%db\n", params.MaxLevel(), qBitsOfLevel(params, params.MaxLevel()))
+	fmt.Printf("degree / lowerLen          : %d / %d, splitTop=%v\n", degree, lowerLen, splitTop)
+	fmt.Printf("Galois keys                : %d\n", len(galEls))
+	fmt.Printf("key generation             : %v\n", keyTime)
+	if *keyLevelSummaryFlag {
+		printEvaluationKeyLevelSummary(params, relinKeyLevel, relinKeySizeBytes, rotationKeyLevelStats, evalKeySizeBytes, *levelAwareKeysFlag)
+	}
+	fmt.Printf("ParallelLT level policy    : %s\n", formatParallelLTLevelPolicy(*dropBeforeLTFlag, effectiveLTLevel, effectiveLTPostLevel, *ltScaleAfterMulFlag))
+	fmt.Println("ParallelLT implementation  : hoisted BSGS / double-hoisted Algorithm-3 path")
+	if globalDeferPointwiseRescale {
+		fmt.Println("Algorithm 5 final-sum rescale : deferred after line 7/12 RotateAndSum")
+	}
+	if *schemeDFlag {
+		fmt.Printf("Scheme-D Qprime/S/K        : Qprime=%d, S=%d, K=ceil(Qprime/T)=%d, S^{-1}=%d mod T\n", qPrime, schemeDScaleS, schemeDTargetScale, schemeDInvS)
+	}
+	if m1GammaOneInfo != nil {
+		if m1GammaOneInfo.OutputLevel > 0 {
+			fmt.Printf("m=1 gamma-one Q[1]        : Q[1]=%d (%d bits), Q[1] mod T=%d, target residue=%d; mode=%s; output before final tail L%d\n", m1GammaOneInfo.Prime, m1GammaOneInfo.Bits, m1GammaOneInfo.Prime%T, m1GammaOneInfo.TargetResidueModT, m1GammaOneInfo.Mode, m1GammaOneInfo.OutputLevel)
+		} else {
+			fmt.Printf("m=1 gamma-one Q[1]        : Q[1]=%d (%d bits), Q[1] mod T=%d, target residue=%d; mode=%s; polynomial output L0, so Q[1] is specialized as the last polynomial-evaluation modulus\n", m1GammaOneInfo.Prime, m1GammaOneInfo.Bits, m1GammaOneInfo.Prime%T, m1GammaOneInfo.TargetResidueModT, m1GammaOneInfo.Mode)
+		}
+		if m1GammaOneInfo.AutoComputed {
+			if m1GammaOneInfo.OutputLevel > 0 {
+				fmt.Printf("m=1 gamma-one auto        : predicted output scale σ=%d, product Q[2..L%d]=%d mod T, old gamma=%d, old gamma^{-1}=%d\n", m1GammaOneInfo.OutputScaleModT, m1GammaOneInfo.OutputLevel, m1GammaOneInfo.TailRestProductModT, m1GammaOneInfo.PredictedOldGammaModT, m1GammaOneInfo.PredictedOldGammaInvModT)
+			} else {
+				fmt.Printf("m=1 gamma-one auto        : old polynomial output scale σ=%d, old gamma=%d, old gamma^{-1}=%d; target Q[1] residue = σ * old Q[1] mod T\n", m1GammaOneInfo.OutputScaleModT, m1GammaOneInfo.PredictedOldGammaModT, m1GammaOneInfo.PredictedOldGammaInvModT)
+			}
+		}
+		if m1GammaOneInfo.OldGammaInvModT != 0 {
+			fmt.Printf("m=1 gamma-one legacy      : supplied old gamma^{-1}=%d, old gamma=%d, old Q[1] mod T=%d\n", m1GammaOneInfo.OldGammaInvModT, m1GammaOneInfo.OldGammaModT, m1GammaOneInfo.OldQ1ResidueModT)
+		}
+		if m1GammaOneInfo.OutputLevel > 0 {
+			fmt.Printf("m=1 gamma-one final Q'    : Q[0]=%d (%d bits); product Q[1..L%d] mod T=%d\n", m1GammaOneInfo.FinalQPrime, m1GammaOneInfo.FinalQPrimeBits, m1GammaOneInfo.OutputLevel, m1GammaOneInfo.ProductDroppedModT)
+		} else {
+			fmt.Printf("m=1 gamma-one final Q'    : Q[0]=%d (%d bits); no tail dropped product; Q[1] is consumed inside polynomial evaluation\n", m1GammaOneInfo.FinalQPrime, m1GammaOneInfo.FinalQPrimeBits)
+			fmt.Printf("m=1 gamma-one warning     : poly-last-Q[1] is experimental; changing a modulus consumed inside polynomial evaluation can change Lattigo plaintext-scale semantics. Prefer keeping output at L1 and specializing the tail Q[1], or pre-scale the LUT coefficients.\n")
+		}
+		if m1GammaOneInfo.Bits != m1GammaOneInfo.RequestedBits {
+			fmt.Printf("m=1 gamma-one note        : requested %d-bit Q[1] had no suitable prime; used %d-bit Q[1] instead\n", m1GammaOneInfo.RequestedBits, m1GammaOneInfo.Bits)
+		}
+	}
+	if useLWEInput {
+		fmt.Printf("fixed LWE secret           : %s; h=%d, #+1=%d, #-1=%d\n", fixedLWESecretInfo.Name, fixedLWESecretInfo.H, fixedLWESecretInfo.Pos, fixedLWESecretInfo.Neg)
+	}
 	fmt.Println("====================================")
 	fmt.Println()
-	fmt.Println("---------- One-time preprocessing ----------")
-	fmt.Printf("SlotToCoeff basis         : %v\n", basisTime)
-	fmt.Printf("SlotToCoeff diagonals     : %v\n", diagTime)
-	fmt.Printf("SlotToCoeff plaintexts    : %v\n", slotPTTime)
-	fmt.Printf("key generation            : %v\n", keygenTime)
-	fmt.Printf("encrypted secret blocks   : %v\n", secretBlockPrepTime)
-	fmt.Printf("target secret build       : %v\n", targetSecretTime)
-	fmt.Printf("evaluation-key generation : %v\n", evalKeyTime)
-	fmt.Printf("poly-eval Galois keys     : %d\n", len(polyGalEls))
-	fmt.Printf("SlotToCoeff rotations     : %d\n", len(rotationShifts))
-	fmt.Printf("packing Galois keys       : %d\n", len(inputPackGalEls))
-	fmt.Printf("distinct Galois keys total: %d\n", len(galEls))
-	fmt.Printf("leveled rotation keys     : %v\n", *leveledRotationKeysFlag)
-	fmt.Printf("rotation level plan       : pack=%d, polyPower=%d, polyGrouped=%d, polyLT-in=%d, polyLT-out=%d, final-sum=%d, poly-out=%d\n", packRotationLevel, polyLevelInfo.PowerLevel, polyLevelInfo.GroupedLevel, polyLevelInfo.LTInputLevel, polyLevelInfo.LTOutputLevel, polyLevelInfo.FinalSumLevel, polyLevelInfo.OutputLevel)
-	fmt.Printf("rotation keys total size  : %s (%d bytes)\n", formatBytesIEC(rotationKeySizeBytes), rotationKeySizeBytes)
-	for _, st := range rotationKeyLevelStats {
-		fmt.Printf("  - LevelQ=%d (#Q=%d, logQ≈%d bits): %d keys, %s (%d bytes)\n", st.LevelQ, st.LevelQ+1, st.LogQBits, st.Count, formatBytesIEC(st.SizeBytes), st.SizeBytes)
-	}
-	fmt.Printf("relinearization key size  : %s (%d bytes)\n", formatBytesIEC(rlkSizeBytes), rlkSizeBytes)
-	fmt.Printf("final key-switch key level: LevelQ=%d (#Q=%d, logQ≈%d bits), %s\n", finalKeySwitchLevelQ, finalKeySwitchLevelQ+1, finalKSEvalParams.RingQ().AtLevel(finalKeySwitchLevelQ).Modulus().BitLen(), formatLevelPForPrint(finalKSEvalParams, finalKeySwitchLevelP))
-	fmt.Printf("final key-switch pow2 base: %s\n", formatPow2BaseForPrint(*finalKSPow2BaseFlag))
-	if finalKeySwitchLevelP == -1 {
-		fmt.Printf("final key-switch params   : Q-only parameter view, PCount=%d\n", finalKSEvalParams.PCount())
-	}
-	fmt.Printf("final key-switch key size : %s (%d bytes)\n", formatBytesIEC(evalKeySizeBytes), evalKeySizeBytes)
-	fmt.Printf("auxiliary keys total size : %s (%d bytes)\n", formatBytesIEC(auxKeySizeBytes), auxKeySizeBytes)
-	fmt.Printf("encrypted secret size     : %s (%d bytes)\n", formatBytesIEC(secretBlockSizeBytes), secretBlockSizeBytes)
-	fmt.Printf("run memory cleanup        : clear per-run refs, gc-every=%d, free-os-memory=%v, mem-progress=%v\n", *gcEveryFlag, *freeOSMemoryFlag, *memProgressFlag)
-	fmt.Printf("one-time preprocessing    : %v\n", oneTimeTotal)
-	fmt.Println("--------------------------------------------")
-	fmt.Println()
 
-	perRunRandomFunction := *runsFlag > 1 && strings.TrimSpace(*funcTableFlag) == "" && strings.TrimSpace(*funcFileFlag) == ""
-	perRunFreshLWE := *runsFlag > 1
-	perRunFreshMessages := perRunFreshLWE && !explicitMsgVector && *randomMsgFlag
+	detailed := *runsFlag == 1 || *runVerboseFlag
+	allCorrect := true
+	allNoiseDiffs := make([]int64, 0, (*runsFlag)*m)
+	allQBeforeKSDiffs := make([]int64, 0, (*runsFlag)*m)
+	allQAfterKSDiffs := make([]int64, 0, (*runsFlag)*m)
+	allQKSDiffs := make([]int64, 0, (*runsFlag)*m)
+	allQExtractedDiffs := make([]int64, 0, (*runsFlag)*m)
 	runResults := make([]BenchRunSummary, 0, *runsFlag)
 	var sumDynamic BenchDynamicSetupTiming
 	var sumOnline BenchOnlineTiming
-	allNoiseDiffs := make([]int64, 0, (*runsFlag)*m)
-	allCorrect := true
+	var sumRunWall time.Duration
+	var sumQPrimeProbeWall time.Duration
+	var lastTailSecretInfo TailSecretInfo
+	var lastTailDigits int
+	var lastTailNoiseT TailNoiseStats
+	programWallStart := time.Now()
+	m1GammaAbsorbScale := uint64(1)
+	m1GammaAbsorbCalibrated := !m1AbsorbGammaEnabled
 
 	for runIdx := 0; runIdx < *runsFlag; runIdx++ {
-		if *progressFlag {
-			progressf("run %d/%d: dynamic setup", runIdx+1, *runsFlag)
-		}
-		var runRes BenchRunSummary
-		runRes.Run = runIdx + 1
+		runNo := runIdx + 1
+		runWallStart := time.Now()
 		runFuncSeed := *funcSeedFlag + int64(runIdx)
-		runNoiseSeed := *noiseSeedFlag + int64(runIdx)
+		runCoeffSeed := *coeffSeedFlag + int64(runIdx)
+		runInputSeed := *inputSeedFlag + int64(runIdx)
+		runPhaseErrorSeed := *phaseErrorSeedFlag + int64(runIdx)
 		runLWEASeed := *lweASeedFlag + int64(runIdx)
-		runMsgSeed := *msgSeedFlag + int64(runIdx)
+		progressf("run %d/%d: dynamic setup", runNo, *runsFlag)
+		resetMulTraceForRun(params, encoder, dec, *mulTraceFlag && detailed, *mulTraceNoiseFlag && detailed)
+
+		var runRes BenchRunSummary
+		runRes.Run = runNo
 		runRes.FuncSeed = runFuncSeed
-		runRes.LWENoiseSeed = runNoiseSeed
+		runRes.LWENoiseSeed = runPhaseErrorSeed
 		runRes.LWEASeed = runLWEASeed
-		runRes.MsgSeed = runMsgSeed
-		var runMsgMod []uint64
-		if explicitMsgVector {
-			runMsgMod = append([]uint64(nil), msgMod...)
-		} else if perRunFreshMessages {
-			runMsgMod = makeRandomMessages(m, pMsg, runMsgSeed)
-		} else {
-			runMsgMod = append([]uint64(nil), msgMod...)
-		}
-		lweSetupStart := time.Now()
-		runSlotNoiseCentered := sampleTruncatedDiscreteGaussian(m, *noiseSigmaFlag, noiseBound, runNoiseSeed)
-		runInputLWECts, runXMod, err := generateRandomLWECiphertexts(runMsgMod, lweSecret, alpha, T, runSlotNoiseCentered, runLWEASeed)
+		runRes.MsgSeed = runInputSeed
+
+		polyBuild, err := buildRunPolynomialCoeffs(T, *pFlag, degree, m, *coeffModeFlag, *funcSpecFlag, *funcTableFlag, *funcFileFlag, runCoeffSeed, runFuncSeed, *schemeDFlag, schemeDScaleS)
 		if err != nil {
 			panic(err)
 		}
-		runRes.Dynamic.LWECiphertexts = time.Since(lweSetupStart)
-		funcStart := time.Now()
-		funcSpecForRun := *funcSpecFlag
-		if perRunRandomFunction {
-			funcSpecForRun = "random"
+		if polyBuild.LowerLen != lowerLen || polyBuild.SplitTop != splitTop {
+			panic("internal run polynomial split changed across runs")
 		}
-		funcTable, funcDesc, err := buildFunctionTableWithSeed(pMsg, funcSpecForRun, *funcTableFlag, *funcFileFlag, runFuncSeed)
+		runRes.Dynamic.FunctionTable += polyBuild.Timing.FunctionTable
+		runRes.Dynamic.LUTBuild += polyBuild.Timing.LUTBuild
+		runRes.FuncDesc = polyBuild.FuncDesc
+
+		inputParsed, err := parseVector(*inputFlag)
 		if err != nil {
 			panic(err)
 		}
-		runRes.FuncDesc = funcDesc
-		runRes.Dynamic.FunctionTable = time.Since(funcStart)
-		lutStart := time.Now()
-		var lutCoeffMod []uint64
-		if use9BitPow2Mode {
-			lutCoeffMod, err = buildLUTPolynomialCoefficientsPow2Exact(T, pMsg, funcTable)
-		} else {
-			lutCoeffMod, err = buildLUTPolynomialCoefficientsGeneral(T, pMsg, funcTable)
-		}
+		phaseX, inputMessages, inputErrors, inputDesc, err := buildRLWEPhaseInputs(phaseBuilderMode, inputParsed, *messageFlag, *phaseErrorFlag, m, T, *pFlag, runInputSeed, runPhaseErrorSeed, *phaseErrorSigmaFlag, *phaseErrorBoundFlag)
 		if err != nil {
 			panic(err)
 		}
-		runRes.Dynamic.LUTBuild = time.Since(lutStart)
-		var coeffMod []uint64
-		if use9BitPow2Mode {
-			coeffMod = lutCoeffMod
-		} else {
-			coeffMod = make([]uint64, userD+1)
-			copy(coeffMod, lutCoeffMod)
-		}
-		var coeffsLower [][]uint64
-		var leadCoeffs []uint64
-		if use9BitPow2Mode {
-			coeffsLower = replicateSinglePolynomial(coeffMod[:d], m)
-			leadCoeffs = repeatLeadingCoeff(coeffMod[d], m)
-		} else {
-			if useLargeAlg5Branch(N, m, d) {
-				coeffsLower = replicateSinglePolynomialShared(coeffMod, m)
-			} else {
-				coeffsLower = replicateSinglePolynomial(coeffMod, m)
+
+		var inputLWECts []LWECiphertext
+		if useLWEInput {
+			if len(inputMessages) != m || len(inputErrors) != m {
+				panic("-input-mode=lwe requires phase/message generation; internal message/error vectors are missing")
 			}
-			leadCoeffs = repeatLeadingCoeff(0, m)
-		}
-		polyPreStart := time.Now()
-		var prePoly *PreprocessedPolyEval
-		var preLargeAlg5LT *PreprocessedParallelLT3
-		if !use9BitPow2Mode && useLargeAlg5Branch(N, m, d) {
-			if *ltPrecomputeTermMasksFlag {
-				UViews := buildPatersonStockmeyerMatrixViews(coeffsLower, r)
-				preLargeAlg5LT, err = preprocessParallelLT3Views(params, encoder, UViews, m, d/r, r)
-				if err != nil {
-					panic(err)
+			alpha := T / *pFlag
+			stLWE := time.Now()
+			var lwePhaseX []uint64
+			inputLWECts, lwePhaseX, err = generateRandomLWECiphertexts(inputMessages, fixedLWESecretSigned, alpha, T, inputErrors, runLWEASeed)
+			runRes.Dynamic.LWECiphertexts = time.Since(stLWE)
+			if err != nil {
+				panic(fmt.Errorf("generate input LWE ciphertexts: %w", err))
+			}
+			if bad := firstMismatch(lwePhaseX, phaseX); bad >= 0 {
+				panic(fmt.Sprintf("internal LWE phase mismatch at item %d: generated=%d expected=%d", bad, lwePhaseX[bad], phaseX[bad]))
+			}
+			for i := range inputLWECts {
+				gotPhase := rawDecryptLWE(inputLWECts[i], fixedLWESecretSigned, T)
+				if gotPhase != phaseX[i] {
+					panic(fmt.Sprintf("generated LWE ciphertext %d decrypts to phase %d, want %d", i, gotPhase, phaseX[i]))
 				}
 			}
-		} else if *polyPrecomputeFlag {
-			prePoly, err = preprocessPolyEvalPlaintexts(params, encoder, m, d, coeffsLower, leadCoeffs)
+			inputDesc = fmt.Sprintf("LWE->RLWE Step 1: %s; generated LWE phases x=Delta*m+e in Z_%d", step1Plan.Desc, T)
+		}
+
+		polyInputX := append([]uint64(nil), phaseX...)
+		slots, rCheck, err := sparsePackMod(polyInputX, N)
+		if err != nil {
+			panic(err)
+		}
+		if rCheck != r {
+			panic("internal r mismatch")
+		}
+
+		var ctIn *rlwe.Ciphertext
+		var step1Wall, step1NormalizeTime time.Duration
+		var step1Stats LWEToRLWEStats
+		var step1StartLevel, step1RescaleTarget int
+		if useLWEInput {
+			stStep1 := time.Now()
+			secretModT := tailSignedCoeffsToMod(fixedLWESecretSigned, T)
+			ctIn, step1Stats, err = homomorphicDecryptLWEToSparseRLWE(params, encoder, enc, eval, inputLWECts, secretModT, step1Plan, m)
+			if err != nil {
+				panic(fmt.Errorf("LWE->RLWE Step 1 failed: %w", err))
+			}
+			step1Wall = time.Since(stStep1)
+			step1StartLevel = ctIn.Level()
+			step1RescaleTarget = ctIn.Level()
+			if *lweStep1RescaleLevelsFlag > 0 {
+				step1RescaleTarget = ctIn.Level() - *lweStep1RescaleLevelsFlag
+				if step1RescaleTarget < 0 {
+					panic(fmt.Sprintf("-lwe-step1-rescale-levels=%d exceeds Step1 output level L%d", *lweStep1RescaleLevelsFlag, ctIn.Level()))
+				}
+				step1NormalizeTime, err = rescaleCiphertextToLevelWithTrace(eval, ctIn, step1RescaleTarget, "LWE->RLWE Step1 normalization before polynomial evaluation")
+				if err != nil {
+					panic(fmt.Errorf("LWE->RLWE Step1 normalization failed: %w", err))
+				}
+			}
+		} else {
+			ptIn, err := encodeBatchedPlaintextAtMaxLevel(params, encoder, slots)
+			if err != nil {
+				panic(err)
+			}
+			ctIn, err = enc.EncryptNew(ptIn)
 			if err != nil {
 				panic(err)
 			}
 		}
-		runRes.Dynamic.PolyPrecompute = time.Since(polyPreStart)
-		runRes.Dynamic.Total = runRes.Dynamic.LWECiphertexts + runRes.Dynamic.FunctionTable + runRes.Dynamic.LUTBuild + runRes.Dynamic.PolyPrecompute
+		polyRegisterExpected(ctIn, slots)
 
-		targetDecodedFirstMMod := make([]uint64, m)
-		targetEncodedFirstMMod := make([]uint64, m)
-		for i := 0; i < m; i++ {
-			targetDecodedFirstMMod[i] = funcTable[runMsgMod[i]] % pMsg
-			targetEncodedFirstMMod[i] = mulMod(alpha, targetDecodedFirstMMod[i], T)
-		}
-		plainEvalFirstMMod := evalSinglePolyVector(runXMod, coeffMod, T)
-
-		polyNoiseTracer := makePolyNoiseTracer(*polyNoiseTraceFlag, params, encoder, dec, *polyNoisePreviewFlag, false)
-		setPolyNoiseTraceContext(polyNoiseTracer, runXMod, coeffsLower, leadCoeffs)
-
-		packStart := time.Now()
-		ctIn, err := homomorphicPackLWECiphertexts(params, evalPack, secretBlockCTs, runInputLWECts, m)
-		if err != nil {
-			panic(err)
-		}
-		runRes.Online.Pack = time.Since(packStart)
-		// These LWE-side objects are no longer needed after the packing ciphertext is built.
-		runInputLWECts = nil
-		runSlotNoiseCentered = nil
-
-		var ctEval *rlwe.Ciphertext
-		polyStart := time.Now()
-		if singleSlotDirect {
-			if prePoly != nil {
-				ctEval, runRes.Online.Poly, err = benchPolyEvalSingleSlotDirectPrecomp(params, evalPoly, ctIn, prePoly)
-			} else {
-				ctEval, runRes.Online.Poly, err = benchPolyEvalSingleSlotDirect(params, evalPoly, ctIn, m, coeffsLower, leadCoeffs)
+		largeAlg5Branch := useLargeAlg5Branch(N, m, lowerLen)
+		if m1AbsorbGammaEnabled && !m1GammaAbsorbCalibrated {
+			stCalib := time.Now()
+			var calibPre *PreprocessedPolyEval
+			if *precomputeFlag {
+				calibPre, err = preprocessPolyEvalPlaintextsAligned(params, encoder, m, lowerLen, polyBuild.CoeffsLower, polyBuild.LeadCoeffs, ctIn.Level(), *dropBeforeLTFlag, effectiveLTLevel, effectiveLTPostLevel, *ltScaleAfterMulFlag, largeAlg5Branch)
+				if err != nil {
+					panic(fmt.Errorf("m=1 gamma absorb calibration plaintext precompute failed: %w", err))
+				}
 			}
-		} else if !use9BitPow2Mode && useLargeAlg5Branch(N, m, d) {
-			ctEval, runRes.Online.Poly, err = benchPolyEvalSparsePow2Alg5LargeBranch(params, evalPoly, ctIn, m, coeffsLower, leadCoeffs, preLargeAlg5LT, *dropBeforeLTFlag, alg5LTDropLevel, alg5LTPostLevel)
-		} else if prePoly != nil {
-			ctEval, runRes.Online.Poly, err = benchPolyEvalSparsePow2Alg5Precomp(params, evalPoly, ctIn, prePoly, *dropBeforeLTFlag, alg5LTDropLevel, alg5LTPostLevel)
-		} else {
-			ctEval, runRes.Online.Poly, err = benchPolyEvalSparsePow2Alg5(params, evalPoly, ctIn, m, coeffsLower, leadCoeffs, *dropBeforeLTFlag, alg5LTDropLevel, alg5LTPostLevel)
+			savedMulTracer := globalMulTracer
+			globalMulTracer = newMulTraceRecorder(false, false, params, encoder, dec)
+			ctCalibIn := ctIn.CopyNew()
+			polyCopyExpected(ctIn, ctCalibIn)
+			ctCalibOut, _, err := benchPolyEvalWithPlan(params, eval, ctCalibIn, m, lowerLen, r, polyBuild.CoeffsLower, polyBuild.LeadCoeffs, calibPre, largeAlg5Branch, *dropBeforeLTFlag, effectiveLTLevel, effectiveLTPostLevel, *ltScaleAfterMulFlag)
+			globalMulTracer = savedMulTracer
+			if err != nil {
+				panic(fmt.Errorf("m=1 gamma absorb calibration polynomial evaluation failed: %w", err))
+			}
+			calibGamma, err := tailScaleAfterRescaleToLevel(params, scaleModUint64(ctCalibOut.Scale, T), ctCalibOut.Level(), 0, T)
+			if err != nil {
+				panic(fmt.Errorf("m=1 gamma absorb calibration scale computation failed: %w", err))
+			}
+			m1GammaAbsorbScale, err = tailInvModUint64(calibGamma, T)
+			if err != nil {
+				panic(fmt.Errorf("m=1 gamma absorb calibration gamma=%d is not invertible mod T=%d: %w", calibGamma, T, err))
+			}
+			m1GammaAbsorbCalibrated = true
+			runRes.Dynamic.M1GammaCalibration += time.Since(stCalib)
+			if detailed {
+				fmt.Printf("m=1 gamma absorb calibration: output L%d, raw gamma=%d, pre-scale gamma^{-1}=%d, time=%v (offline; not counted in online)\n", ctCalibOut.Level(), calibGamma, m1GammaAbsorbScale, runRes.Dynamic.M1GammaCalibration)
+			}
+			ctCalibIn = nil
+			ctCalibOut = nil
+			calibPre = nil
 		}
-		if err != nil {
-			panic(err)
+		m1GammaAbsorbThisRun := m1AbsorbGammaEnabled && m1GammaAbsorbCalibrated && m1GammaAbsorbScale%T != 1
+		if m1GammaAbsorbThisRun {
+			polyBuild = scaleRunPolynomialBuildResult(polyBuild, m1GammaAbsorbScale, T, fmt.Sprintf("m=1 gamma^{-1} pre-absorbed into polynomial, gamma^{-1}=%d", m1GammaAbsorbScale))
 		}
-		_ = polyStart
-		// Release large LUT/plaintext-preprocessing structures as soon as polynomial
-		// evaluation has consumed them. This reduces the peak heap before SlotToCoeff,
-		// final key-switching, and verification allocate their own temporary buffers.
-		ctIn = nil
-		coeffMod = nil
-		lutCoeffMod = nil
-		coeffsLower = nil
-		leadCoeffs = nil
-		prePoly = nil
-		preLargeAlg5LT = nil
-		if !*polyNoiseTraceFlag {
-			runXMod = nil
+
+		var pre *PreprocessedPolyEval
+		if *precomputeFlag {
+			st := time.Now()
+			pre, err = preprocessPolyEvalPlaintextsAligned(params, encoder, m, lowerLen, polyBuild.CoeffsLower, polyBuild.LeadCoeffs, ctIn.Level(), *dropBeforeLTFlag, effectiveLTLevel, effectiveLTPostLevel, *ltScaleAfterMulFlag, largeAlg5Branch)
+			if err != nil {
+				panic(err)
+			}
+			runRes.Dynamic.PolyPrecompute = time.Since(st)
 		}
+		runRes.Dynamic.Total = runRes.Dynamic.FunctionTable + runRes.Dynamic.LUTBuild + runRes.Dynamic.LWECiphertexts + runRes.Dynamic.PolyPrecompute + runRes.Dynamic.M1GammaCalibration
+
+		polyNoiseTracer := makePolyNoiseTracer(*polyNoiseTraceFlag && detailed, params, encoder, dec, *polyNoisePreviewFlag, false)
+		setPolyNoiseTraceContext(polyNoiseTracer, polyInputX, polyBuild.CoeffsLower, polyBuild.LeadCoeffs)
+
+		if pre != nil && runIdx == 0 && !detailed {
+			fmt.Printf("plaintext precompute       : %v for run 1 (dynamic/offline per run)\n", runRes.Dynamic.PolyPrecompute)
+			printPolyPrecomputePlaintextMemorySummary(params, pre)
+		}
+		if detailed {
+			fmt.Printf("========== Run %d/%d ==========%s", runNo, *runsFlag, "\n")
+			fmt.Printf("dynamic setup time         : %v (lwe=%v, func=%v, lut=%v, pt=%v, gamma=%v)\n", runRes.Dynamic.Total, runRes.Dynamic.LWECiphertexts, runRes.Dynamic.FunctionTable, runRes.Dynamic.LUTBuild, runRes.Dynamic.PolyPrecompute, runRes.Dynamic.M1GammaCalibration)
+			fmt.Printf("coefficients               : %s\n", polyBuild.CoeffDesc)
+			fmt.Printf("plaintext precompute       : %v (offline for this run)\n", runRes.Dynamic.PolyPrecompute)
+			if pre != nil {
+				printPolyPrecomputePlaintextMemorySummary(params, pre)
+			}
+			fmt.Printf("input mode                 : %s\n", inputDesc)
+			if useLWEInput {
+				fmt.Printf("LWE->RLWE Step1            : raw level=L%d/%db -> input level=L%d/%db, blocks=%d, period=%d, CMult=%d, rotations=%d, rowrots=%d, adds=%d, bsk-enc=%d, time=%v, normalize=%v\n", step1StartLevel, qBitsOfLevel(params, step1StartLevel), ctIn.Level(), qBitsOfLevel(params, ctIn.Level()), step1Stats.Blocks, step1Stats.InnerPeriod, step1Stats.CMults, step1Stats.Rotations, step1Stats.RowRotations, step1Stats.Additions, step1Stats.Encryptions, step1Wall, step1NormalizeTime)
+			}
+			if len(inputMessages) > 0 {
+				fmt.Printf("input messages m[0:%d]     : %v\n", minInt(len(inputMessages), 8), inputMessages[:minInt(len(inputMessages), 8)])
+			}
+			if len(inputErrors) > 0 {
+				fmt.Printf("input phase errors e[0:%d] : %v\n", minInt(len(inputErrors), 8), inputErrors[:minInt(len(inputErrors), 8)])
+			}
+			fmt.Printf("input phase x[0:%d]        : %v\n", minInt(len(phaseX), 8), phaseX[:minInt(len(phaseX), 8)])
+		}
+
 		var ctOut *rlwe.Ciphertext
-		slotToCoeffStart := time.Now()
-		if skipSlotToCoeff {
-			ctOut = ctEval.CopyNew()
-			runRes.Online.SlotToCoeff = 0
-		} else {
-			ctOut, _, err = HomomorphicSparseLinearTransformBSGSPrecomp(params, evalLT, ctEval, preSlotLT)
-			if err != nil {
-				panic(err)
-			}
-			runRes.Online.SlotToCoeff = time.Since(slotToCoeffStart)
-		}
-		ctEval = nil
-		targetSecretBFV := skTargetBFV
-		_ = targetSecretBFV
-		keySwitchStart := time.Now()
-		ctKeySwitchIn := ctOut
-		if ctKeySwitchIn.Level() > finalKeySwitchLevelQ {
-			ctKeySwitchIn = ctOut.CopyNew()
-			// Important: extractEval is created in scale-invariant BFV mode for the final
-			// key-switch / extraction path. In that mode Rescale returns without consuming
-			// a level, which causes an infinite loop in rescaleCiphertextToLevel. The
-			// pre-KS modulus switch must use the ordinary leveled evaluator.
-			if err := rescaleCiphertextToLevel(evalLT, ctKeySwitchIn, finalKeySwitchLevelQ); err != nil {
-				panic(fmt.Errorf("final key-switch input rescale to level %d failed: %w", finalKeySwitchLevelQ, err))
-			}
-		}
-		if ctKeySwitchIn.Level() != finalKeySwitchLevelQ {
-			panic(fmt.Errorf("final key-switch input level=%d, want level=%d", ctKeySwitchIn.Level(), finalKeySwitchLevelQ))
-		}
-		ctKS, err := extractEval.ApplyEvaluationKeyNew(ctKeySwitchIn, evkKS)
+		var tm BenchPolyEvalTiming
+		start := time.Now()
+		ctOut, tm, err = benchPolyEvalWithPlan(params, eval, ctIn, m, lowerLen, r, polyBuild.CoeffsLower, polyBuild.LeadCoeffs, pre, largeAlg5Branch, *dropBeforeLTFlag, effectiveLTLevel, effectiveLTPostLevel, *ltScaleAfterMulFlag)
 		if err != nil {
 			panic(err)
 		}
-		runRes.Online.KeySwitch = time.Since(keySwitchStart)
-		ringQ := finalKSEvalParams.RingQ().AtLevel(ctKS.Level())
-		bigQ := ringQ.Modulus()
-		gamma := negQInvModT(bigQ, T)
-		gammaInv := modInverseU64(gamma, T)
-		keySwitchedScaleModT := ctKS.Scale.Uint64() % T
-		scaleInv := uint64(1)
-		if *scaleCompFlag {
-			if keySwitchedScaleModT == 0 {
-				panic("ciphertext scale is 0 mod T; cannot invert for extraction correction")
-			}
-			scaleInv = modInverseU64(keySwitchedScaleModT, T)
-		}
-		combinedCorrection := uint64(1)
-		if *gammaCompFlag {
-			combinedCorrection = (combinedCorrection * gammaInv) % T
-		}
-		if *scaleCompFlag {
-			combinedCorrection = (combinedCorrection * scaleInv) % T
-		}
-		ctExtract := ctKS
-		if combinedCorrection != 1 {
-			corrStart := time.Now()
-			ctExtract, err = extractEval.MulNew(ctKS, combinedCorrection)
-			if err != nil {
-				panic(err)
-			}
-			runRes.Online.Correction = time.Since(corrStart)
-		}
-		modSwitchStart := time.Now()
-		c0Big := polyToBigintCentered(ringQ, ctExtract.Value[0], ctExtract.IsNTT, ctExtract.IsMontgomery)
-		c1Big := polyToBigintCentered(ringQ, ctExtract.Value[1], ctExtract.IsNTT, ctExtract.IsMontgomery)
-		paperA := make([]*big.Int, params.N())
-		paperB := make([]*big.Int, params.N())
-		for i := 0; i < params.N(); i++ {
-			paperB[i] = modPositiveBig(c0Big[i], bigQ)
-			paperA[i] = modPositiveBig(new(big.Int).Neg(c1Big[i]), bigQ)
-		}
-		aQq := make([]uint64, params.N())
-		bQq := make([]uint64, params.N())
-		for i := 0; i < params.N(); i++ {
-			aQq[i] = roundModSwitchBig(paperA[i], bigQ, T)
-			bQq[i] = roundModSwitchBig(paperB[i], bigQ, T)
-		}
-		runRes.Online.ModSwitch = time.Since(modSwitchStart)
-		extractStart := time.Now()
-		positivePositions := collectPositiveSparsePositions(m, step)
-		lweCts := sampleExtractSelected(aQq, bQq, positivePositions, nLWE, T)
-		runRes.Online.SampleExtract = time.Since(extractStart)
-		// External modulus switching buffers can be large; release them before the
-		// coefficient verification step allocates decoded slot/coefficient arrays.
-		c0Big = nil
-		c1Big = nil
-		paperA = nil
-		paperB = nil
-		aQq = nil
-		bQq = nil
-		ctKS = nil
-		ctExtract = nil
-		runRes.Online.Total = runRes.Online.Pack + runRes.Online.Poly.Total + runRes.Online.SlotToCoeff + runRes.Online.KeySwitch + runRes.Online.Correction + runRes.Online.ModSwitch + runRes.Online.SampleExtract
 
-		coeffVerifyStart := time.Now()
-		ptOut := dec.DecryptNew(ctOut)
-		decryptedSlotsMod := make([]uint64, N)
-		if err := encoder.Decode(ptOut, decryptedSlotsMod); err != nil {
-			panic(err)
+		expectedFirst := fullPolyValues(polyInputX, polyBuild.CoeffsLower, polyBuild.LeadCoeffs, lowerLen, T)
+		m1GammaAbsorbUndoScale := uint64(1)
+		logicalExpectedFirst := expectedFirst
+		if m1GammaAbsorbThisRun {
+			m1GammaAbsorbUndoScale, err = tailInvModUint64(m1GammaAbsorbScale, T)
+			if err != nil {
+				panic(fmt.Errorf("m=1 gamma absorb pre-scale %d is not invertible modulo T=%d: %w", m1GammaAbsorbScale, T, err))
+			}
+			logicalExpectedFirst = scalarMulVectorMod(expectedFirst, m1GammaAbsorbUndoScale, T)
 		}
-		_, coeffsCenteredOut, err := encodeSlotsToPolynomialCoefficients(params, encoder, decryptedSlotsMod)
+		expectedSlots := repeatVector(expectedFirst, r)
+		polyRegisterExpected(ctOut, expectedSlots)
+		finalLevelBeforeRescale := ctOut.Level()
+		finalQBitsBeforeRescale := qBitsOfLevel(params, ctOut.Level())
+		if !*extractLWEFlag && *finalLevelFlag >= 0 {
+			if *finalLevelFlag > ctOut.Level() {
+				panic(fmt.Sprintf("-final-level=%d exceeds current output level L%d", *finalLevelFlag, ctOut.Level()))
+			}
+			finalRescaleTime, err := rescaleCiphertextToLevelWithTrace(eval, ctOut, *finalLevelFlag, "Polynomial output normalization")
+			if err != nil {
+				panic(err)
+			}
+			tm.Breakdown.FinalRescale = finalRescaleTime
+			tm.Total += finalRescaleTime
+		}
+		polyOnlineTime := time.Since(start)
+		clearPolyNoiseTraceContext()
+
+		gotSlots, err := decodeSlots(params, encoder, dec, ctOut)
 		if err != nil {
 			panic(err)
 		}
-		positiveCoeffs := extractCoefficientsAtPositions(coeffsCenteredOut, positivePositions)
-		negativeCoeffs := extractCoefficientsAtPositions(coeffsCenteredOut, collectNegativeSparsePositions(m, N, step))
-		expectedPositive := centeredSlice(targetEncodedFirstMMod, T)
-		expectedNegative := make([]int64, 0, m-1)
-		for i := 1; i < m; i++ {
-			expectedNegative = append(expectedNegative, -expectedPositive[i])
+		ok := firstMismatch(gotSlots, expectedSlots) < 0
+		runRes.PolyPlainOK = ok
+		if !ok && detailed {
+			bad := firstMismatch(gotSlots, expectedSlots)
+			fmt.Printf("polynomial plaintext mismatch: first=%d, got=%d, want=%d\n", bad, gotSlots[bad], expectedSlots[bad])
 		}
-		_ = coeffVerifyStart
-		runRes.PolyPlainOK = equalUint64Slices(plainEvalFirstMMod, targetEncodedFirstMMod)
-		runRes.CoeffOK = equalInt64Slices(positiveCoeffs, expectedPositive) && equalInt64Slices(negativeCoeffs, expectedNegative)
-		lwePhaseMod := make([]uint64, len(lweCts))
-		lweDiffs := make([]int64, len(lweCts))
-		decodedMsgsModP := make([]uint64, len(lweCts))
-		decodedMatches := 0
-		maxAbsDiff := int64(0)
-		for i := range lweCts {
-			lwePhaseMod[i] = rawDecryptLWE(lweCts[i], lweSecret, T)
-			lweDiffs[i] = centeredDiff(lwePhaseMod[i], targetEncodedFirstMMod[i], T)
-			if abs64(lweDiffs[i]) > maxAbsDiff {
-				maxAbsDiff = abs64(lweDiffs[i])
-			}
-			decodedMsgsModP[i] = decodePhaseToMessageModP(lwePhaseMod[i], alpha, pMsg, T)
-			if decodedMsgsModP[i] == targetDecodedFirstMMod[i] {
-				decodedMatches++
+
+		var expectedOutputMessages, decodedOutputMessages []uint64
+		messageOK := true
+		if len(inputMessages) > 0 && len(polyBuild.FuncTable) == int(*pFlag) {
+			alpha := T / *pFlag
+			expectedOutputMessages = make([]uint64, len(inputMessages))
+			decodedOutputMessages = make([]uint64, len(inputMessages))
+			for i := range inputMessages {
+				expectedOutputMessages[i] = polyBuild.FuncTable[int(inputMessages[i]%*pFlag)] % *pFlag
+				phaseForDecode := gotSlots[i]
+				if *schemeDFlag {
+					phaseForDecode = tailMulMod(phaseForDecode, schemeDInvS, T)
+					if m1GammaAbsorbThisRun {
+						phaseForDecode = tailMulMod(phaseForDecode, m1GammaAbsorbUndoScale, T)
+					}
+				}
+				decodedOutputMessages[i] = decodePhaseToMessageModP(phaseForDecode, alpha, *pFlag, T)
+				if decodedOutputMessages[i] != expectedOutputMessages[i] {
+					messageOK = false
+				}
 			}
 		}
-		runRes.NoiseDiffs = lweDiffs
-		runRes.NoiseMean = meanInt64(lweDiffs)
-		runRes.NoiseStd = stdDevInt64(lweDiffs)
-		runRes.NoiseMaxAbs = maxAbsDiff
-		runRes.DecodeOK = decodedMatches == len(lweCts)
-		runRes.Correct = runRes.PolyPlainOK && runRes.CoeffOK && runRes.DecodeOK
+
+		var stcWall, tailRescaleWall, tailBufferRescaleWall, tailFinalRescaleWall, finalKSWall, sampleExtractWall, qToTWall time.Duration
+		var qprimeNoiseProbeWall time.Duration
+		var tailNoiseT TailNoiseStats
+		var tailSecretInfo TailSecretInfo
+		var tailDigits int
+		var tailPhaseT, tailExpectedPhase, tailMuOut []uint64
+		var targetQ []uint64
+		var tailOK = true
+		var tailCoeffPlaintextOK = true
+		var tailCoeffBad = -1
+		var tailCoeffGot, tailCoeffWant uint64
+		var tailNoiseQBeforeKS, tailNoiseQAfterKSRLWE, tailNoiseQAfterExtract, tailNoiseQKSDelta, tailNoiseQExtractDelta TailNoiseStats
+		var tailPhaseQBeforeKS, tailPhaseQAfterKSRLWE, tailPhaseQAfterExtract []uint64
+		var tailNoiseQBuffer TailBigNoiseStats
+		var stcStats BSGSStats
+		stcRawScaleModT := uint64(1)
+		stcResidualScaleModT := uint64(1)
+		stcPreAbsorbScaleModT := uint64(1)
+		stcScaleCorrection := uint64(1)
+
+		if *extractLWEFlag {
+			if !*schemeDFlag && detailed {
+				fmt.Println("warning: -extract-lwe is intended for -scheme-d=true; ordinary BGV raw t^{-1}M generally does not Q'->T to M")
+			}
+			if !skipStCForM1 && ctOut.Level() < 1 {
+				panic(fmt.Sprintf("sparse SlotToCoeff needs at least one remaining level; got poly output L%d", ctOut.Level()))
+			}
+			tailExpectedPhase = append([]uint64(nil), logicalExpectedFirst...)
+			stcPlainTarget := append([]uint64(nil), expectedFirst...)
+			stcDiagForRun := stcDiagExt
+			if *schemeDFlag {
+				tailExpectedPhase = scalarMulVectorMod(logicalExpectedFirst, schemeDInvS, T)
+			}
+			stcRawScaleModT = 1
+			stcScaleCorrection = 1
+			st := time.Now()
+			var ctCoeff *rlwe.Ciphertext
+			if skipStCForM1 {
+				ctCoeff = ctOut.CopyNew()
+				polyCopyExpected(ctOut, ctCoeff)
+				if *schemeDFlag {
+					stcRawScaleModT, err = tailScaleAfterRescaleToLevel(params, scaleModUint64(ctOut.Scale, T), ctOut.Level(), 0, T)
+					if err != nil {
+						panic(fmt.Errorf("compute m=1 final BGV scale: %w", err))
+					}
+					stcResidualScaleModT = stcRawScaleModT
+					if m1GammaAbsorbThisRun {
+						stcPreAbsorbScaleModT = m1GammaAbsorbScale % T
+						stcResidualScaleModT = tailMulMod(stcRawScaleModT, stcPreAbsorbScaleModT, T)
+					}
+					if stcResidualScaleModT != 1 {
+						stcScaleCorrection, err = tailInvModUint64(stcResidualScaleModT, T)
+						if err != nil {
+							panic(fmt.Errorf("m=1 residual BGV scale is not invertible modulo T: %w", err))
+						}
+						if *m1ScaleFixFlag {
+							corrSlots := make([]uint64, N)
+							for i := range corrSlots {
+								corrSlots[i] = stcScaleCorrection
+							}
+							before := ctCoeff.CopyNew()
+							polyCopyExpected(ctCoeff, before)
+							mulStart := time.Now()
+							ctCoeff, err = eval.MulNew(ctCoeff, corrSlots)
+							mulDur := time.Since(mulStart)
+							if err != nil {
+								panic(fmt.Errorf("m=1 residual gamma^{-1} plaintext correction failed: %w", err))
+							}
+							logMulTrace(fmt.Sprintf("m=1 no-StC residual scale correction: multiply by residual gamma^{-1}=%d before extraction", stcScaleCorrection), "ct-pt-StC", before, nil, ctCoeff, false, mulDur, expectedForCtPlainMul(before, corrSlots))
+							stcStats.PlainCipherMults++
+							stcPlainTarget = scalarMulVectorMod(expectedFirst, stcScaleCorrection, T)
+						}
+					}
+				}
+			} else {
+				if *schemeDFlag {
+					stcRawScaleModT, err = tailScaleAfterRescaleToLevel(params, scaleModUint64(ctOut.Scale, T), ctOut.Level(), 0, T)
+					if err != nil {
+						panic(fmt.Errorf("compute post-StC BGV scale: %w", err))
+					}
+					stcScaleCorrection, err = tailInvModUint64(stcRawScaleModT, T)
+					if err != nil {
+						panic(fmt.Errorf("post-StC scale is not invertible modulo T: %w", err))
+					}
+					stcPlainTarget = scalarMulVectorMod(expectedFirst, stcScaleCorrection, T)
+					if stcScaleCorrection != 1 {
+						stcDiagForRun = scaleMatrixMod(stcDiagExt, stcScaleCorrection, T)
+					}
+				}
+				ctCoeff, stcStats, err = HomomorphicSparseLinearTransformBSGS(params, eval, ctOut, stcDiagForRun)
+				if err != nil {
+					panic(fmt.Errorf("sparse SlotToCoeff failed: %w", err))
+				}
+			}
+			stcWall = time.Since(st)
+			ctCoeff.IsBatched = false
+			targetScaledCoeffs := tailTauInvariantTargetCoeffs(stcPlainTarget, N, m, stcStep, T)
+			extractPositions, err := tailExtractionPositions(N, m, stcStep)
+			if err != nil {
+				panic(err)
+			}
+			if ctCoeff.Level() > 0 {
+				tailName := "post-StC"
+				labelPrefix := "Post-StC"
+				if skipStCForM1 {
+					tailName = "post-polyeval"
+					labelPrefix = "Post-polyeval"
+				}
+				stcBufferLevelReached := -1
+				if *stcBufferLevelFlag > 0 {
+					bufferLevel := *stcBufferLevelFlag
+					if bufferLevel <= ctCoeff.Level() {
+						if bufferLevel < ctCoeff.Level() {
+							stBuffer := time.Now()
+							if tailBufferRescaleWall, err = rescaleCiphertextToLevelWithTrace(eval, ctCoeff, bufferLevel, fmt.Sprintf("%s first normalization Q -> buffer L%d", labelPrefix, bufferLevel)); err != nil {
+								panic(err)
+							}
+							ctCoeff.IsBatched = false
+							tailBufferRescaleWall = time.Since(stBuffer)
+						}
+						stcBufferLevelReached = ctCoeff.Level()
+						if *qprimeKSNoiseFlag {
+							stProbe := time.Now()
+							phaseBuffer, qBuffer, err := tailRLWEPhaseAtPositionsBig(params, ctCoeff, sk, extractPositions)
+							if err != nil {
+								panic(fmt.Errorf("probe %s buffer RLWE phase: %w", tailName, err))
+							}
+							targetBuffer, err := tailTargetRawPhasesFromPlainAtLevel(stcPlainTarget, scaleModUint64(ctCoeff.Scale, T), qBuffer, T)
+							if err != nil {
+								panic(fmt.Errorf("build %s buffer raw target: %w", tailName, err))
+							}
+							tailNoiseQBuffer = tailComputeNoiseStatsBig(phaseBuffer, targetBuffer, qBuffer, nil)
+							qprimeNoiseProbeWall += time.Since(stProbe)
+						}
+					}
+				}
+				if ctCoeff.Level() > 0 {
+					label := fmt.Sprintf("%s normalization Q -> Qprime", labelPrefix)
+					if stcBufferLevelReached >= 0 && ctCoeff.Level() == stcBufferLevelReached {
+						label = fmt.Sprintf("%s buffer -> Qprime", labelPrefix)
+					}
+					stFinal := time.Now()
+					if tailFinalRescaleWall, err = rescaleCiphertextToLevelWithTrace(eval, ctCoeff, 0, label); err != nil {
+						panic(err)
+					}
+					tailFinalRescaleWall = time.Since(stFinal)
+				}
+			}
+			tailRescaleWall = tailBufferRescaleWall + tailFinalRescaleWall
+			ctCoeff.IsBatched = false
+			coeffDecoded, err := tailDecryptCoeffs(params, encoder, dec, ctCoeff)
+			if err != nil {
+				panic(fmt.Errorf("decrypt post-StC/no-StC coeffs: %w", err))
+			}
+			if badCoeff := firstMismatch(coeffDecoded, targetScaledCoeffs); badCoeff >= 0 {
+				tailCoeffPlaintextOK = false
+				tailCoeffBad = badCoeff
+				tailCoeffGot = coeffDecoded[badCoeff]
+				tailCoeffWant = targetScaledCoeffs[badCoeff]
+			}
+			runRes.CoeffOK = tailCoeffPlaintextOK
+			targetQ, err = tailTargetRawPhasesSchemeD(tailExpectedPhase, schemeDScaleS, qPrime, T)
+			if err != nil {
+				panic(err)
+			}
+			if *qprimeKSNoiseFlag {
+				stProbe := time.Now()
+				skBeforeKS, err := tailSecretKeyCoeffsAtQPrime(params, sk)
+				if err != nil {
+					panic(fmt.Errorf("extract input secret at Qprime before final key switch: %w", err))
+				}
+				tailPhaseQBeforeKS, err = tailRLWEPhaseAtPositionsQPrime(params, ctCoeff, skBeforeKS, extractPositions)
+				if err != nil {
+					panic(fmt.Errorf("probe Qprime noise before final key switch: %w", err))
+				}
+				tailNoiseQBeforeKS = tailComputeNoiseStats(tailPhaseQBeforeKS, targetQ, qPrime, 0)
+				qprimeNoiseProbeWall += time.Since(stProbe)
+			}
+			lweSecretSigned := fixedLWESecretSigned
+			secInfo := fixedLWESecretInfo
+			tailSecretInfo = secInfo
+			st = time.Now()
+			ctOutQ, digits, err := tailManualFinalKeySwitchNoSpecialQPrime(params, ctCoeff, sk, lweSecretSigned, *ksBaseLogFlag, *ksCenteredFlag, *finalKSSigmaFlag, finalKSRng)
+			if err != nil {
+				panic(fmt.Errorf("final Qprime-only key switch failed: %w", err))
+			}
+			tailDigits = digits
+			finalKSWall = time.Since(st)
+			ctOutQ.IsBatched = false
+			if *qprimeKSNoiseFlag {
+				stProbe := time.Now()
+				skAfterKS := tailSignedSecretPaddedMod(lweSecretSigned, N, qPrime)
+				tailPhaseQAfterKSRLWE, err = tailRLWEPhaseAtPositionsQPrime(params, ctOutQ, skAfterKS, extractPositions)
+				if err != nil {
+					panic(fmt.Errorf("probe Qprime noise after final key switch before SampleExtract: %w", err))
+				}
+				tailNoiseQAfterKSRLWE = tailComputeNoiseStats(tailPhaseQAfterKSRLWE, targetQ, qPrime, 0)
+				tailNoiseQKSDelta = tailComputeNoiseStats(tailPhaseQAfterKSRLWE, tailPhaseQBeforeKS, qPrime, 0)
+				qprimeNoiseProbeWall += time.Since(stProbe)
+			}
+			st = time.Now()
+			lweQ, err := tailSampleExtractMany(params, ctOutQ, *lweNFlag, m, stcStep)
+			if err != nil {
+				panic(err)
+			}
+			sampleExtractWall = time.Since(st)
+			stProbeExtractQ := time.Now()
+			tailPhaseQAfterExtract = make([]uint64, m)
+			skQp := tailSignedCoeffsToMod(lweSecretSigned, qPrime)
+			for i := 0; i < m; i++ {
+				tailPhaseQAfterExtract[i] = tailDecryptLWEPhase(lweQ[i], skQp, qPrime)
+			}
+			tailNoiseQAfterExtract = tailComputeNoiseStats(tailPhaseQAfterExtract, targetQ, qPrime, 0)
+			if *qprimeKSNoiseFlag {
+				tailNoiseQExtractDelta = tailComputeNoiseStats(tailPhaseQAfterExtract, tailPhaseQAfterKSRLWE, qPrime, 0)
+			}
+			qprimeNoiseProbeWall += time.Since(stProbeExtractQ)
+			st = time.Now()
+			lweOutT := make([]LWECiphertext, m)
+			tailPhaseT = make([]uint64, m)
+			tailMuOut = make([]uint64, m)
+			skT := tailSignedCoeffsToMod(lweSecretSigned, T)
+			alpha := T / *pFlag
+			for i := 0; i < m; i++ {
+				lweOutT[i] = tailLWEModSwitch(lweQ[i], qPrime, T)
+				tailPhaseT[i] = tailDecryptLWEPhase(lweOutT[i], skT, T)
+				tailMuOut[i] = decodePhaseToMessageModP(tailPhaseT[i], alpha, *pFlag, T)
+			}
+			qToTWall = time.Since(st)
+			tailNoiseT = tailComputeNoiseStats(tailPhaseT, tailExpectedPhase, T, alpha/2)
+			tailOK = tailNoiseT.OverBound == 0
+			if len(expectedOutputMessages) > 0 {
+				tailOK = firstMismatch(tailMuOut, expectedOutputMessages) < 0
+			}
+			runRes.DecodeOK = tailOK
+		} else {
+			runRes.CoeffOK = true
+			runRes.DecodeOK = messageOK
+		}
+
+		onlineTime := time.Since(start)
+		if qprimeNoiseProbeWall > 0 && onlineTime >= qprimeNoiseProbeWall {
+			onlineTime -= qprimeNoiseProbeWall
+		}
+		if useLWEInput {
+			onlineTime += step1Wall + step1NormalizeTime
+		}
+		step2EvalPower := tm.Breakdown.BuildBasis + tm.Breakdown.SquareXRHalf + tm.Breakdown.BuildGrouped + tm.Breakdown.ComputeXD
+		step2BatchLT := tm.Breakdown.ParallelLT
+		step2Total := stageBreakdownTotal(tm)
+		step3Total := stcWall + tailRescaleWall + finalKSWall + sampleExtractWall + qToTWall
+		_ = step2EvalPower
+		_ = step2BatchLT
+		_ = polyOnlineTime
+		_ = finalLevelBeforeRescale
+		_ = finalQBitsBeforeRescale
+		_ = tailNoiseQBeforeKS
+		_ = tailNoiseQAfterKSRLWE
+		_ = tailNoiseQAfterExtract
+		_ = tailNoiseQKSDelta
+		_ = tailNoiseQExtractDelta
+		_ = tailNoiseQBuffer
+		_ = stcStats
+
+		noiseDiffs := make([]int64, 0, m)
+		if len(tailPhaseT) > 0 {
+			noiseDiffs = appendTailNoiseDiffs(noiseDiffs, tailPhaseT, tailExpectedPhase, T)
+		}
+		qBeforeDiffs := make([]int64, 0, m)
+		qAfterDiffs := make([]int64, 0, m)
+		qKSDiffs := make([]int64, 0, m)
+		qExtractDiffs := make([]int64, 0, m)
+		if len(tailPhaseQBeforeKS) > 0 {
+			qBeforeDiffs = appendTailNoiseDiffs(qBeforeDiffs, tailPhaseQBeforeKS, targetQ, qPrime)
+		}
+		if len(tailPhaseQAfterKSRLWE) > 0 {
+			qAfterDiffs = appendTailNoiseDiffs(qAfterDiffs, tailPhaseQAfterKSRLWE, targetQ, qPrime)
+		}
+		if len(tailPhaseQAfterKSRLWE) > 0 && len(tailPhaseQBeforeKS) > 0 {
+			qKSDiffs = appendTailNoiseDiffs(qKSDiffs, tailPhaseQAfterKSRLWE, tailPhaseQBeforeKS, qPrime)
+		}
+		if len(tailPhaseQAfterExtract) > 0 {
+			qExtractDiffs = appendTailNoiseDiffs(qExtractDiffs, tailPhaseQAfterExtract, targetQ, qPrime)
+		}
+		runRes.NoiseMean = meanInt64(noiseDiffs)
+		runRes.NoiseStd = stdDevInt64(noiseDiffs)
+		runRes.NoiseMaxAbs = maxAbsInt64Slice(noiseDiffs)
+		runRes.QBeforeDiffs = qBeforeDiffs
+		runRes.QAfterDiffs = qAfterDiffs
+		runRes.QKSDiffs = qKSDiffs
+		runRes.QExtractDiffs = qExtractDiffs
+		runRes.Online.Pack = step1Wall + step1NormalizeTime
+		runRes.Online.Poly = tm
+		runRes.Online.SlotToCoeff = stcWall + tailRescaleWall
+		runRes.Online.KeySwitch = finalKSWall
+		runRes.Online.ModSwitch = qToTWall
+		runRes.Online.SampleExtract = sampleExtractWall
+		runRes.Online.Total = onlineTime
+		// PolyPlainOK/CoeffOK are Lattigo Decode/plaintext diagnostics. They can be false
+		// when -m1-gamma-one-q deliberately chooses a dropped prime Q[1] that is not
+		// 1 mod T; the definitive correctness test for functional bootstrapping is
+		// the final Qprime->T decoded LWE phase/message check stored in DecodeOK.
+		if *extractLWEFlag {
+			runRes.Correct = runRes.DecodeOK
+		} else {
+			runRes.Correct = runRes.PolyPlainOK && messageOK
+		}
 		allCorrect = allCorrect && runRes.Correct
-		allNoiseDiffs = append(allNoiseDiffs, lweDiffs...)
-		runRes.NoiseDiffs = nil
+		allNoiseDiffs = append(allNoiseDiffs, noiseDiffs...)
+		allQBeforeKSDiffs = append(allQBeforeKSDiffs, qBeforeDiffs...)
+		allQAfterKSDiffs = append(allQAfterKSDiffs, qAfterDiffs...)
+		allQKSDiffs = append(allQKSDiffs, qKSDiffs...)
+		allQExtractedDiffs = append(allQExtractedDiffs, qExtractDiffs...)
+		sumQPrimeProbeWall += qprimeNoiseProbeWall
 		runResults = append(runResults, runRes)
-		sumDynamic.LWECiphertexts += runRes.Dynamic.LWECiphertexts
 		sumDynamic.FunctionTable += runRes.Dynamic.FunctionTable
 		sumDynamic.LUTBuild += runRes.Dynamic.LUTBuild
+		sumDynamic.LWECiphertexts += runRes.Dynamic.LWECiphertexts
 		sumDynamic.PolyPrecompute += runRes.Dynamic.PolyPrecompute
+		sumDynamic.M1GammaCalibration += runRes.Dynamic.M1GammaCalibration
 		sumDynamic.Total += runRes.Dynamic.Total
 		sumOnline.Pack += runRes.Online.Pack
-		sumOnline.Poly.Total += runRes.Online.Poly.Total
-		sumOnline.Poly.Breakdown.BuildBasis += runRes.Online.Poly.Breakdown.BuildBasis
-		sumOnline.Poly.Breakdown.SquareXRHalf += runRes.Online.Poly.Breakdown.SquareXRHalf
-		sumOnline.Poly.Breakdown.BuildGrouped += runRes.Online.Poly.Breakdown.BuildGrouped
-		sumOnline.Poly.Breakdown.ParallelLT += runRes.Online.Poly.Breakdown.ParallelLT
-		sumOnline.Poly.Breakdown.LTMatrixBuild += runRes.Online.Poly.Breakdown.LTMatrixBuild
-		sumOnline.Poly.Breakdown.LTDecompose += runRes.Online.Poly.Breakdown.LTDecompose
-		sumOnline.Poly.Breakdown.LTBabyRotations += runRes.Online.Poly.Breakdown.LTBabyRotations
-		sumOnline.Poly.Breakdown.LTGiantRotations += runRes.Online.Poly.Breakdown.LTGiantRotations
-		sumOnline.Poly.Breakdown.LTPlaintextCipherMul += runRes.Online.Poly.Breakdown.LTPlaintextCipherMul
-		sumOnline.Poly.Breakdown.LTFirstStageOther += runRes.Online.Poly.Breakdown.LTFirstStageOther
-		sumOnline.Poly.Breakdown.LTSecondStage += runRes.Online.Poly.Breakdown.LTSecondStage
-		sumOnline.Poly.Breakdown.LTPostProcess += runRes.Online.Poly.Breakdown.LTPostProcess
-		sumOnline.Poly.Breakdown.LTPostRescale += runRes.Online.Poly.Breakdown.LTPostRescale
-		sumOnline.Poly.Breakdown.LTResidual += runRes.Online.Poly.Breakdown.LTResidual
-		sumOnline.Poly.Breakdown.PointwiseMul += runRes.Online.Poly.Breakdown.PointwiseMul
-		sumOnline.Poly.Breakdown.RotateAndSum += runRes.Online.Poly.Breakdown.RotateAndSum
-		sumOnline.Poly.Breakdown.ComputeXD += runRes.Online.Poly.Breakdown.ComputeXD
-		sumOnline.Poly.Breakdown.LeadingTerm += runRes.Online.Poly.Breakdown.LeadingTerm
-		sumOnline.Poly.Breakdown.FinalAdd += runRes.Online.Poly.Breakdown.FinalAdd
-		sumOnline.Poly.Breakdown.PowerGen += runRes.Online.Poly.Breakdown.PowerGen
-		sumOnline.Poly.Breakdown.OuterCombine += runRes.Online.Poly.Breakdown.OuterCombine
+		addPolyTiming(&sumOnline.Poly, runRes.Online.Poly)
 		sumOnline.SlotToCoeff += runRes.Online.SlotToCoeff
 		sumOnline.KeySwitch += runRes.Online.KeySwitch
-		sumOnline.Correction += runRes.Online.Correction
 		sumOnline.ModSwitch += runRes.Online.ModSwitch
 		sumOnline.SampleExtract += runRes.Online.SampleExtract
 		sumOnline.Total += runRes.Online.Total
-		if *polyNoiseTraceFlag {
+		runRes.Wall = time.Since(runWallStart)
+		sumRunWall += runRes.Wall
+		lastTailSecretInfo = tailSecretInfo
+		lastTailDigits = tailDigits
+		lastTailNoiseT = tailNoiseT
+
+		if detailed {
+			fmt.Println()
+			fmt.Println("========== Polynomial evaluation summary ==========")
+			printBenchPolyTiming(tm)
+			if *extractLWEFlag {
+				fmt.Printf("poly wall before tail      : %v\n", polyOnlineTime)
+			}
+			fmt.Printf("online wall time           : %v\n", onlineTime)
+			fmt.Printf("run wall time              : %v (dynamic setup + online + diagnostics before printing)\n", runRes.Wall)
+			fmt.Printf("pre-final-rescale level    : L%d/%db\n", finalLevelBeforeRescale, finalQBitsBeforeRescale)
+			fmt.Printf("operation counts           : %v\n", mulTraceKindCounts())
+			fmt.Printf("correctness                : %v\n", ok)
+			if len(expectedOutputMessages) > 0 {
+				fmt.Printf("decoded message correctness: %v\n", messageOK)
+				fmt.Printf("expected msg outputs       : %v\n", expectedOutputMessages[:minInt(len(expectedOutputMessages), 8)])
+				fmt.Printf("decoded msg outputs        : %v\n", decodedOutputMessages[:minInt(len(decodedOutputMessages), 8)])
+			}
+			fmt.Printf("expected first outputs     : %v\n", expectedFirst[:minInt(len(expectedFirst), 8)])
+			if m1GammaAbsorbThisRun {
+				fmt.Printf("logical first outputs      : %v  (after undoing m=1 gamma pre-scale)\n", logicalExpectedFirst[:minInt(len(logicalExpectedFirst), 8)])
+			}
+			fmt.Printf("decoded first outputs      : %v\n", gotSlots[:minInt(len(gotSlots), 8)])
+			if *extractLWEFlag {
+				fmt.Println()
+				fmt.Println("========== StC / extraction / Qprime->T summary ==========")
+				fmt.Printf("StC/scale-fix time / ops   : %v; CMult=%d, rotations=%d, baby=%d, giant=%d, additions=%d\n", stcWall, stcStats.PlainCipherMults, stcStats.Rotations, stcStats.BabyRotations, stcStats.GiantRotations, stcStats.Additions)
+				if skipStCForM1 && *schemeDFlag {
+					status := "skipped"
+					if stcResidualScaleModT != 1 && *m1ScaleFixFlag {
+						status = "applied"
+					} else if stcResidualScaleModT != 1 && !*m1ScaleFixFlag {
+						status = "needed but disabled"
+					}
+					fmt.Printf("m=1 no-StC BGV scale gamma : raw=%d mod T, polynomial-pre-scale=%d, residual=%d, residual^{-1}=%d; correction %s\n", stcRawScaleModT, stcPreAbsorbScaleModT, stcResidualScaleModT, stcScaleCorrection, status)
+				}
+				fmt.Printf("post-StC total rescale time: %v\n", tailRescaleWall)
+				if !tailCoeffPlaintextOK {
+					fmt.Printf("coefficient plaintext check: false; first coeff mismatch %d, got=%d, want=%d\n", tailCoeffBad, tailCoeffGot, tailCoeffWant)
+				} else {
+					fmt.Printf("coefficient plaintext check: true\n")
+				}
+				fmt.Printf("final key-switch           : %v; digits=%d, base=2^%d, centered=%v, sigma=%.2f, no special P\n", finalKSWall, tailDigits, *ksBaseLogFlag, *ksCenteredFlag, *finalKSSigmaFlag)
+				fmt.Printf("sample extract time        : %v\n", sampleExtractWall)
+				if qprimeNoiseProbeWall > 0 {
+					fmt.Printf("Qprime noise probe time    : %v (diagnostic only; excluded from online total)\n", qprimeNoiseProbeWall)
+				}
+				fmt.Printf("Qprime -> T time           : %v\n", qToTWall)
+				if len(qBeforeDiffs) > 0 {
+					fmt.Printf("noise at Qprime before KS  : max|e|=%d, RMS=%.3f, mean|e|=%.3f, std=%.3f, samples=%d\n", maxAbsInt64Slice(qBeforeDiffs), rmsInt64(qBeforeDiffs), meanAbsInt64(qBeforeDiffs), stdDevInt64(qBeforeDiffs), len(qBeforeDiffs))
+				}
+				if len(qAfterDiffs) > 0 {
+					fmt.Printf("noise at Qprime after KS   : max|e|=%d, RMS=%.3f, mean|e|=%.3f, std=%.3f, samples=%d  (before Qprime->T)\n", maxAbsInt64Slice(qAfterDiffs), rmsInt64(qAfterDiffs), meanAbsInt64(qAfterDiffs), stdDevInt64(qAfterDiffs), len(qAfterDiffs))
+				}
+				if len(qKSDiffs) > 0 {
+					fmt.Printf("KS-added noise at Qprime   : max|Δe|=%d, RMS=%.3f, mean|Δe|=%.3f, std=%.3f, samples=%d\n", maxAbsInt64Slice(qKSDiffs), rmsInt64(qKSDiffs), meanAbsInt64(qKSDiffs), stdDevInt64(qKSDiffs), len(qKSDiffs))
+				}
+				if len(qExtractDiffs) > 0 {
+					maxQ := maxAbsInt64Slice(qExtractDiffs)
+					proj := projectedTNoiseFromQPrime(maxQ, qPrime, T)
+					reqQ := minQPrimeForProjectedTNoise(maxQ, T, (T / *pFlag)/2)
+					fmt.Printf("noise at Qprime extracted  : max|e|=%d, RMS=%.3f, mean|e|=%.3f, std=%.3f, samples=%d  (immediately before Qprime->T)\n", maxQ, rmsInt64(qExtractDiffs), meanAbsInt64(qExtractDiffs), stdDevInt64(qExtractDiffs), len(qExtractDiffs))
+					if reqQ.Sign() > 0 {
+						fmt.Printf("Qprime sizing estimate     : projected T max≈%.3f; min Q' for projected max < radius ≈ %s (%d bits), +2/+4 margin ≈ %d/%d bits\n", proj, reqQ.String(), reqQ.BitLen(), reqQ.BitLen()+2, reqQ.BitLen()+4)
+					}
+				}
+				fmt.Printf("noise after Qprime->T      : max|e|=%d at item %d, RMS=%.3f, mean|e|=%.3f, std=%.3f, decoding radius=%d, over-radius=%d/%d\n", tailNoiseT.MaxAbs, tailNoiseT.MaxIndex, tailNoiseT.RMS, tailNoiseT.MeanAbs, tailNoiseT.StdDev, (T / *pFlag)/2, tailNoiseT.OverBound, tailNoiseT.Count)
+				fmt.Printf("final phase[0:%d]          : %v\n", minInt(len(tailPhaseT), 8), tailPhaseT[:minInt(len(tailPhaseT), 8)])
+				fmt.Printf("target phase[0:%d]         : %v\n", minInt(len(tailExpectedPhase), 8), tailExpectedPhase[:minInt(len(tailExpectedPhase), 8)])
+				fmt.Printf("final decoded mu[0:%d]     : %v\n", minInt(len(tailMuOut), 8), tailMuOut[:minInt(len(tailMuOut), 8)])
+				fmt.Printf("final LWE correctness      : %v\n", tailOK)
+				if *outputNoiseTableFlag || !tailOK {
+					printTailOutputNoiseTable(tailPhaseT, tailExpectedPhase, tailMuOut, expectedOutputMessages, T, (T / *pFlag)/2, *outputNoiseTableLimitFlag)
+				}
+			}
+			if (polyNoiseTracer != nil && polyNoiseTracer.Enabled) || mulTraceProbeTime() > 0 {
+				fmt.Printf("noise trace overhead       : %v checkpoint probes + %v operation probes = %v (diagnostic only; excluded from HE operation total)\n", polyNoiseProbeTime(), mulTraceProbeTime(), polyNoiseProbeTime()+mulTraceProbeTime())
+			}
 			polyNoiseTracer.Print()
+			printMulTraceSummary()
 		}
-		clearPolyNoiseTraceContext()
 
-		// Release objects that are only needed for this run.
-		// Keep one-time keys, evaluators, and preprocessing alive for subsequent runs.
-		runMsgMod = nil
-		runSlotNoiseCentered = nil
-		runInputLWECts = nil
-		runXMod = nil
-		funcTable = nil
-		lutCoeffMod = nil
-		coeffMod = nil
-		coeffsLower = nil
-		leadCoeffs = nil
-		prePoly = nil
-		preLargeAlg5LT = nil
-		targetDecodedFirstMMod = nil
-		targetEncodedFirstMMod = nil
-		plainEvalFirstMMod = nil
-		if polyNoiseTracer != nil {
-			polyNoiseTracer.Entries = nil
+		runNoiseStdText := formatSigmaForSummary(runRes.NoiseStd, len(noiseDiffs))
+		fmt.Printf("Run %d/%d: func-seed=%d, input-seed=%d, phase-error-seed=%d, lwe-a-seed=%d, correct=%v, setup=%v (lwe=%v, func=%v, lut=%v, pt=%v, gamma=%v), online=%v, wall=%v, step1=%v, step2=%v, step3=%v, noise mean=%.4f, noise std=%s, max|.|=%d\n", runNo, *runsFlag, runFuncSeed, runInputSeed, runPhaseErrorSeed, runLWEASeed, runRes.Correct, runRes.Dynamic.Total, runRes.Dynamic.LWECiphertexts, runRes.Dynamic.FunctionTable, runRes.Dynamic.LUTBuild, runRes.Dynamic.PolyPrecompute, runRes.Dynamic.M1GammaCalibration, onlineTime, runRes.Wall, step1Wall+step1NormalizeTime, step2Total, step3Total, runRes.NoiseMean, runNoiseStdText, runRes.NoiseMaxAbs)
+		if *qprimeKSNoiseFlag && len(qExtractDiffs) > 0 && !detailed {
+			maxExtractQ := maxAbsInt64Slice(qExtractDiffs)
+			proj := projectedTNoiseFromQPrime(maxExtractQ, qPrime, T)
+			reqQ := minQPrimeForProjectedTNoise(maxExtractQ, T, (T / *pFlag)/2)
+			reqText := "n/a"
+			if reqQ.Sign() > 0 {
+				reqText = fmt.Sprintf("%d bits (+2=%d, +4=%d)", reqQ.BitLen(), reqQ.BitLen()+2, reqQ.BitLen()+4)
+			}
+			fmt.Printf("  Qprime noise: beforeKS max=%d, afterKS max=%d, KSΔ max=%d, extracted/pre-Q->T max=%d, projected T max≈%.3f, required Q'≈%s\n", maxAbsInt64Slice(qBeforeDiffs), maxAbsInt64Slice(qAfterDiffs), maxAbsInt64Slice(qKSDiffs), maxExtractQ, proj, reqText)
 		}
-		polyNoiseTracer = nil
+
 		ctIn = nil
-		ctEval = nil
 		ctOut = nil
-		ctKS = nil
-		ctExtract = nil
-		c0Big = nil
-		c1Big = nil
-		paperA = nil
-		paperB = nil
-		aQq = nil
-		bQq = nil
-		lweCts = nil
-		ptOut = nil
-		decryptedSlotsMod = nil
-		coeffsCenteredOut = nil
-		positiveCoeffs = nil
-		negativeCoeffs = nil
-		expectedPositive = nil
-		expectedNegative = nil
-		lwePhaseMod = nil
-		lweDiffs = nil
-		decodedMsgsModP = nil
-
+		pre = nil
+		inputLWECts = nil
+		slots = nil
+		gotSlots = nil
+		expectedSlots = nil
+		expectedFirst = nil
+		polyBuild.FullCoeffs = nil
+		polyBuild.CoeffsLower = nil
+		polyBuild.LeadCoeffs = nil
+		polyBuild.FuncTable = nil
 		maybeCollectRunGarbage(runIdx, *runsFlag, *gcEveryFlag, *freeOSMemoryFlag, *memProgressFlag)
 	}
 
-	fmt.Println("========== Per-run Summary ==========")
-	for _, rr := range runResults {
-		fmt.Printf("Run %d: func-seed=%d, lwe-noise-seed=%d, lwe-a-seed=%d, correct=%v, noise mean=%.4f, noise std=%.4f, max|.|=%d, online=%v\n", rr.Run, rr.FuncSeed, rr.LWENoiseSeed, rr.LWEASeed, rr.Correct, rr.NoiseMean, rr.NoiseStd, rr.NoiseMaxAbs, rr.Online.Total)
-	}
-	fmt.Println("=====================================")
 	fmt.Println()
-
-	fmt.Println("========== Aggregated Summary ==========")
+	fmt.Println("========== Aggregated multi-run summary ==========")
 	fmt.Printf("runs                       : %d\n", *runsFlag)
 	fmt.Printf("all runs correct           : %v\n", allCorrect)
 	fmt.Printf("average dynamic setup      : %v\n", benchAvgDuration(sumDynamic.Total, *runsFlag))
+	fmt.Printf("average run wall time      : %v\n", benchAvgDuration(sumRunWall, *runsFlag))
 	fmt.Printf("  - fresh LWE ciphertexts  : %v\n", benchAvgDuration(sumDynamic.LWECiphertexts, *runsFlag))
 	fmt.Printf("  - function table         : %v\n", benchAvgDuration(sumDynamic.FunctionTable, *runsFlag))
-	fmt.Printf("  - LUT build              : %v\n", benchAvgDuration(sumDynamic.LUTBuild, *runsFlag))
+	fmt.Printf("  - LUT/coeff build        : %v\n", benchAvgDuration(sumDynamic.LUTBuild, *runsFlag))
 	fmt.Printf("  - poly plaintext prep    : %v\n", benchAvgDuration(sumDynamic.PolyPrecompute, *runsFlag))
+	if sumDynamic.M1GammaCalibration > 0 {
+		fmt.Printf("  - m=1 gamma calibration  : %v\n", benchAvgDuration(sumDynamic.M1GammaCalibration, *runsFlag))
+	}
 	fmt.Printf("average online total       : %v\n", benchAvgDuration(sumOnline.Total, *runsFlag))
-	fmt.Printf("  - pack LWE->BFV          : %v\n", benchAvgDuration(sumOnline.Pack, *runsFlag))
+	fmt.Printf("  - LWE->RLWE Step1        : %v\n", benchAvgDuration(sumOnline.Pack, *runsFlag))
 	fmt.Printf("  - poly eval total        : %v\n", benchAvgDuration(sumOnline.Poly.Total, *runsFlag))
-	fmt.Printf("    · build basis/powers   : %v\n", benchAvgDuration(sumOnline.Poly.Breakdown.BuildBasis, *runsFlag))
+	fmt.Printf("    · build basis / P      : %v\n", benchAvgDuration(sumOnline.Poly.Breakdown.BuildBasis, *runsFlag))
 	fmt.Printf("    · square x^(r/2)       : %v\n", benchAvgDuration(sumOnline.Poly.Breakdown.SquareXRHalf, *runsFlag))
 	fmt.Printf("    · build grouped powers : %v\n", benchAvgDuration(sumOnline.Poly.Breakdown.BuildGrouped, *runsFlag))
 	fmt.Printf("    · ParallelLT           : %v\n", benchAvgDuration(sumOnline.Poly.Breakdown.ParallelLT, *runsFlag))
-	fmt.Printf("      · LT matrix build    : %v\n", benchAvgDuration(sumOnline.Poly.Breakdown.LTMatrixBuild, *runsFlag))
-	fmt.Printf("      · hoisted decompose  : %v\n", benchAvgDuration(sumOnline.Poly.Breakdown.LTDecompose, *runsFlag))
+	fmt.Printf("      · LT decompose       : %v\n", benchAvgDuration(sumOnline.Poly.Breakdown.LTDecompose, *runsFlag))
 	fmt.Printf("      · baby rotations     : %v\n", benchAvgDuration(sumOnline.Poly.Breakdown.LTBabyRotations, *runsFlag))
 	fmt.Printf("      · giant rotations    : %v\n", benchAvgDuration(sumOnline.Poly.Breakdown.LTGiantRotations, *runsFlag))
 	fmt.Printf("      · pt-ct multiplies   : %v\n", benchAvgDuration(sumOnline.Poly.Breakdown.LTPlaintextCipherMul, *runsFlag))
 	fmt.Printf("      · first-stage other  : %v\n", benchAvgDuration(sumOnline.Poly.Breakdown.LTFirstStageOther, *runsFlag))
-	fmt.Printf("      · second stage       : %v\n", benchAvgDuration(sumOnline.Poly.Breakdown.LTSecondStage, *runsFlag))
 	fmt.Printf("      · post-process       : %v\n", benchAvgDuration(sumOnline.Poly.Breakdown.LTPostProcess, *runsFlag))
 	fmt.Printf("      · post-LT rescale    : %v\n", benchAvgDuration(sumOnline.Poly.Breakdown.LTPostRescale, *runsFlag))
-	fmt.Printf("      · other residual     : %v\n", benchAvgDuration(sumOnline.Poly.Breakdown.LTResidual, *runsFlag))
 	fmt.Printf("    · pointwise multiply   : %v\n", benchAvgDuration(sumOnline.Poly.Breakdown.PointwiseMul, *runsFlag))
 	fmt.Printf("    · rotate-and-sum       : %v\n", benchAvgDuration(sumOnline.Poly.Breakdown.RotateAndSum, *runsFlag))
-	fmt.Printf("    · x^d / power gen      : %v\n", benchAvgDuration(sumOnline.Poly.Breakdown.ComputeXD+sumOnline.Poly.Breakdown.PowerGen, *runsFlag))
-	fmt.Printf("    · outer combine        : %v\n", benchAvgDuration(sumOnline.Poly.Breakdown.OuterCombine, *runsFlag))
+	fmt.Printf("    · compute x^d          : %v\n", benchAvgDuration(sumOnline.Poly.Breakdown.ComputeXD, *runsFlag))
 	fmt.Printf("    · leading term         : %v\n", benchAvgDuration(sumOnline.Poly.Breakdown.LeadingTerm, *runsFlag))
 	fmt.Printf("    · final add            : %v\n", benchAvgDuration(sumOnline.Poly.Breakdown.FinalAdd, *runsFlag))
-	fmt.Printf("  - SlotToCoeff            : %v\n", benchAvgDuration(sumOnline.SlotToCoeff, *runsFlag))
-	fmt.Printf("  - BFV-side key switch    : %v\n", benchAvgDuration(sumOnline.KeySwitch, *runsFlag))
-	fmt.Printf("  - correction mul         : %v\n", benchAvgDuration(sumOnline.Correction, *runsFlag))
-	fmt.Printf("  - external mod switch    : %v\n", benchAvgDuration(sumOnline.ModSwitch, *runsFlag))
+	fmt.Printf("    · final rescale        : %v\n", benchAvgDuration(sumOnline.Poly.Breakdown.FinalRescale, *runsFlag))
+	fmt.Printf("  - StC/rescale            : %v\n", benchAvgDuration(sumOnline.SlotToCoeff, *runsFlag))
+	fmt.Printf("  - final key switch       : %v\n", benchAvgDuration(sumOnline.KeySwitch, *runsFlag))
+	fmt.Printf("  - Qprime -> T            : %v\n", benchAvgDuration(sumOnline.ModSwitch, *runsFlag))
 	fmt.Printf("  - sample extraction      : %v\n", benchAvgDuration(sumOnline.SampleExtract, *runsFlag))
-	fmt.Printf("noise mean (all samples)   : %.4f\n", meanInt64(allNoiseDiffs))
-	fmt.Printf("noise std dev (all samples): %.4f\n", stdDevInt64(allNoiseDiffs))
-	maxAll := int64(0)
-	for _, v := range allNoiseDiffs {
-		if abs64(v) > maxAll {
-			maxAll = abs64(v)
+	fmt.Printf("output noise samples       : %d\n", len(allNoiseDiffs))
+	fmt.Printf("output noise mean          : %.4f\n", meanInt64(allNoiseDiffs))
+	if len(allNoiseDiffs) < 2 {
+		fmt.Printf("output noise std dev       : n/a (need at least 2 samples; use RMS/max|e| for a single m=1 run)\n")
+	} else {
+		fmt.Printf("output noise std dev       : %.4f\n", stdDevInt64(allNoiseDiffs))
+	}
+	fmt.Printf("output noise max |e|       : %d\n", maxAbsInt64Slice(allNoiseDiffs))
+	if len(allQExtractedDiffs) > 0 {
+		fmt.Println("Qprime-domain noise summary:")
+		if sumQPrimeProbeWall > 0 {
+			fmt.Printf("  - probe overhead avg     : %v (diagnostic only; excluded from online total)\n", benchAvgDuration(sumQPrimeProbeWall, *runsFlag))
+		}
+		if len(allQBeforeKSDiffs) > 0 {
+			fmt.Printf("  - %s\n", formatQPrimeNoiseDiffSummary("before final KS", allQBeforeKSDiffs))
+		}
+		if len(allQAfterKSDiffs) > 0 {
+			fmt.Printf("  - %s\n", formatQPrimeNoiseDiffSummary("after final KS", allQAfterKSDiffs))
+		}
+		if len(allQKSDiffs) > 0 {
+			fmt.Printf("  - %s\n", formatQPrimeNoiseDiffSummary("KS-added", allQKSDiffs))
+		}
+		fmt.Printf("  - %s\n", formatQPrimeNoiseDiffSummary("extracted / before Qprime->T", allQExtractedDiffs))
+		radius := (T / *pFlag) / 2
+		maxQ := maxAbsInt64Slice(allQExtractedDiffs)
+		proj := projectedTNoiseFromQPrime(maxQ, qPrime, T)
+		reqQ := minQPrimeForProjectedTNoise(maxQ, T, radius)
+		if reqQ.Sign() > 0 {
+			fmt.Printf("Qprime sizing heuristic    : current Q'=%d (%d bits), T=%d, radius=%d, max extracted |e_Q|=%d, projected max after Q'->T≈%.3f; min Q' for projected max < radius ≈ %s (%d bits), with +2/+4/+8-bit margin ≈ %d/%d/%d bits\n", qPrime, bits.Len64(qPrime), T, radius, maxQ, proj, reqQ.String(), reqQ.BitLen(), reqQ.BitLen()+2, reqQ.BitLen()+4, reqQ.BitLen()+8)
 		}
 	}
-	fmt.Printf("max |noise| (all samples)  : %d\n", maxAll)
-	fmt.Printf("total wall time            : %v\n", time.Since(globalProgress.Start))
-	fmt.Println("========================================")
-	_ = decTargetKS
+	fmt.Printf("total wall time            : %v\n", time.Since(programWallStart))
+	fmt.Println("==============================================")
+
+	if *extractLWEFlag {
+		bootstrapKeyBytes := evalKeySizeBytes
+		if useLWEInput && step1Plan.Blocks > 0 {
+			bootstrapKeyBytes += int64(step1Plan.Blocks) * int64(bfv.NewCiphertext(params, 1, params.MaxLevel()).BinarySize())
+		}
+		if lastTailDigits > 0 {
+			bootstrapKeyBytes += int64(lastTailDigits) * int64(2*N*8)
+		}
+		packingLevels := 0
+		if useLWEInput && *lweStep1RescaleLevelsFlag > 0 {
+			packingLevels = *lweStep1RescaleLevelsFlag
+		}
+		bufferLevels := 0
+		if *stcBufferLevelFlag > 0 {
+			bufferLevels = *stcBufferLevelFlag
+		}
+		sigmaRes := stdDevInt64(allNoiseDiffs)
+		avgStep2Total := benchAvgDuration(sumOnline.Poly.Total, *runsFlag)
+		avgStep3Total := benchAvgDuration(sumOnline.SlotToCoeff+sumOnline.KeySwitch+sumOnline.ModSwitch+sumOnline.SampleExtract, *runsFlag)
+		printPaperStyleFBSummary(N, m, degree, *lweNFlag, T, *pFlag, logQBits, logPBits, packingLevels, bufferLevels, !skipStCForM1, params, bootstrapKeyBytes, benchAvgDuration(sumOnline.Pack, *runsFlag), benchAvgDuration(sumOnline.Poly.Breakdown.BuildBasis+sumOnline.Poly.Breakdown.SquareXRHalf+sumOnline.Poly.Breakdown.BuildGrouped+sumOnline.Poly.Breakdown.ComputeXD, *runsFlag), benchAvgDuration(sumOnline.Poly.Breakdown.ParallelLT, *runsFlag), avgStep2Total, avgStep3Total, benchAvgDuration(sumOnline.Total, *runsFlag), benchAvgDuration(sumOnline.Total, *runsFlag), sigmaRes, len(allNoiseDiffs), lastTailSecretInfo)
+		printFailureProbabilitySummary(T, *pFlag, *lweNFlag, lastTailSecretInfo, sigmaRes, lastTailNoiseT)
+	}
+
+	if !allCorrect {
+		os.Exit(2)
+	}
+}
+
+// ================= Scheme-D + sparse StC/extraction tail helpers =================
+
+func firstMismatch(a, b []uint64) int {
+	n := len(a)
+	if len(b) < n {
+		n = len(b)
+	}
+	for i := 0; i < n; i++ {
+		if a[i] != b[i] {
+			return i
+		}
+	}
+	if len(a) != len(b) {
+		return n
+	}
+	return -1
+}
+
+func scalarMulVectorMod(v []uint64, scalar, mod uint64) []uint64 {
+	out := make([]uint64, len(v))
+	for i := range v {
+		out[i] = tailMulMod(v[i]%mod, scalar%mod, mod)
+	}
+	return out
+}
+
+func tailSchemeDScale(qPrime, t uint64) (targetScale, S uint64, err error) {
+	c := qPrime % t
+	if c == 0 {
+		return 0, 0, fmt.Errorf("Qprime divisible by T")
+	}
+	targetScale = (qPrime + t - 1) / t
+	S = t - c
+	if S == 0 || tailGCDUint64(S, t) != 1 {
+		return 0, 0, fmt.Errorf("invalid Scheme-D S=%d modulo T=%d", S, t)
+	}
+	return targetScale, S, nil
+}
+
+// Legacy helper for the old scaled-input variant. The current Scheme-D tail does not
+// use it: the polynomial input remains x=Delta*m+e, and the LUT output is scaled
+// directly by S, i.e. F(x)=S*P(x) on the valid noisy intervals.
+func scalePolynomialCoefficientsForSchemeD(coeffs []uint64, S, mod uint64) ([]uint64, error) {
+	invS, err := tailInvModUint64(S%mod, mod)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]uint64, len(coeffs))
+	powInv := uint64(1)
+	for j, a := range coeffs {
+		_ = j
+		out[j] = tailMulMod(tailMulMod(a%mod, S%mod, mod), powInv, mod)
+		powInv = tailMulMod(powInv, invS, mod)
+	}
+	return out, nil
+}
+
+func scaleMatrixMod(mat [][]uint64, scalar, mod uint64) [][]uint64 {
+	out := make([][]uint64, len(mat))
+	for i := range mat {
+		out[i] = scalarMulVectorMod(mat[i], scalar, mod)
+	}
+	return out
+}
+
+func tailScaleAfterRescaleToLevel(params bfv.Parameters, inputScale uint64, fromLevel, targetLevel int, modT uint64) (uint64, error) {
+	if targetLevel < 0 || targetLevel > fromLevel {
+		return 0, fmt.Errorf("invalid target level L%d from L%d", targetLevel, fromLevel)
+	}
+	scale := inputScale % modT
+	for level := fromLevel; level > targetLevel; level-- {
+		qi := params.Q()[level] % modT
+		invQi, err := tailInvModUint64(qi, modT)
+		if err != nil {
+			return 0, fmt.Errorf("Q[%d]=%d is not invertible modulo T=%d", level, params.Q()[level], modT)
+		}
+		scale = tailMulMod(scale, invQi, modT)
+	}
+	return scale, nil
+}
+
+func tailTauInvariantTargetCoeffs(x []uint64, N, m, tau int, q uint64) []uint64 {
+	coeffs := make([]uint64, N)
+	if len(x) == 0 {
+		return coeffs
+	}
+	coeffs[0] = x[0] % q
+	for j := 1; j < m && j < len(x); j++ {
+		coeffs[j*tau] = x[j] % q
+		if x[j]%q == 0 {
+			coeffs[(2*m-j)*tau] = 0
+		} else {
+			coeffs[(2*m-j)*tau] = q - (x[j] % q)
+		}
+	}
+	return coeffs
+}
+
+func tailDecryptCoeffs(params bfv.Parameters, encoder *bfv.Encoder, decryptor *rlwe.Decryptor, ct *rlwe.Ciphertext) ([]uint64, error) {
+	pt := decryptor.DecryptNew(ct)
+	pt.IsBatched = false
+	out := make([]uint64, params.N())
+	if err := encoder.Decode(pt, out); err != nil {
+		return nil, err
+	}
+	for i := range out {
+		out[i] %= params.PlaintextModulus()
+	}
+	return out, nil
+}
+
+func tailExtractionPositions(N, m, tau int) ([]int, error) {
+	if m <= 0 {
+		return nil, fmt.Errorf("invalid m=%d", m)
+	}
+	if tau <= 0 {
+		return nil, fmt.Errorf("invalid extraction stride tau=%d", tau)
+	}
+	out := make([]int, m)
+	for i := 0; i < m; i++ {
+		pos := i * tau
+		if pos < 0 || pos >= N {
+			return nil, fmt.Errorf("extraction position %d*tau=%d outside [0,%d)", i, pos, N)
+		}
+		out[i] = pos
+	}
+	return out, nil
+}
+
+func tailSecretKeyCoeffsAtQPrime(params bfv.Parameters, sk *rlwe.SecretKey) ([]uint64, error) {
+	ringQ := params.RingQ().AtLevel(0)
+	skPoly := tailPolyToCoeffNormal(ringQ, sk.Value.Q, true, true)
+	out := make([]uint64, params.N())
+	copy(out, skPoly.Coeffs[0])
+	Qp := params.Q()[0]
+	for i := range out {
+		out[i] %= Qp
+	}
+	return out, nil
+}
+
+func tailSignedSecretPaddedMod(secret []int64, N int, mod uint64) []uint64 {
+	out := make([]uint64, N)
+	for i, c := range secret {
+		if i >= N {
+			break
+		}
+		out[i] = tailSignedToMod(c, mod)
+	}
+	return out
+}
+
+func tailRLWEPhaseAtPositionsQPrime(params bfv.Parameters, ct *rlwe.Ciphertext, secretMod []uint64, positions []int) ([]uint64, error) {
+	if ct.Level() != 0 {
+		return nil, fmt.Errorf("expected level 0/Qprime ciphertext, got level %d", ct.Level())
+	}
+	N := params.N()
+	Qp := params.Q()[0]
+	ringQ := params.RingQ().AtLevel(0)
+	c0 := tailPolyToCoeffNormal(ringQ, ct.Value[0], ct.IsNTT, ct.IsMontgomery)
+	c1 := tailPolyToCoeffNormal(ringQ, ct.Value[1], ct.IsNTT, ct.IsMontgomery)
+	skPoly := ringQ.NewPoly()
+	for i := 0; i < N && i < len(secretMod); i++ {
+		skPoly.Coeffs[0][i] = secretMod[i] % Qp
+	}
+	phasePoly := tailMulPolyCoeffNormal(ringQ, c1, skPoly)
+	ringQ.Add(c0, phasePoly, phasePoly)
+	out := make([]uint64, len(positions))
+	for i, pos := range positions {
+		if pos < 0 || pos >= N {
+			return nil, fmt.Errorf("position %d outside [0,%d)", pos, N)
+		}
+		out[i] = phasePoly.Coeffs[0][pos] % Qp
+	}
+	return out, nil
+}
+
+func tailSampleExtractMany(params bfv.Parameters, ct *rlwe.Ciphertext, lweN, m, tau int) ([]LWECiphertext, error) {
+	if ct.Level() != 0 {
+		return nil, fmt.Errorf("expected level 0 before SampleExtract, got %d", ct.Level())
+	}
+	ringQ := params.RingQ().AtLevel(0)
+	p0 := tailPolyToCoeffNormal(ringQ, ct.Value[0], ct.IsNTT, ct.IsMontgomery)
+	p1 := tailPolyToCoeffNormal(ringQ, ct.Value[1], ct.IsNTT, ct.IsMontgomery)
+	c0 := p0.Coeffs[0]
+	c1 := p1.Coeffs[0]
+	Qp := params.Q()[0]
+	N := params.N()
+	if lweN > N {
+		return nil, fmt.Errorf("lweN=%d exceeds ring degree N=%d", lweN, N)
+	}
+	out := make([]LWECiphertext, m)
+	for item := 0; item < m; item++ {
+		k := item * tau
+		if k >= N {
+			return nil, fmt.Errorf("extraction index k=%d exceeds N=%d", k, N)
+		}
+		a := make([]uint64, lweN)
+		for j := 0; j < lweN; j++ {
+			var coeff uint64
+			if j <= k {
+				coeff = c1[k-j]
+			} else {
+				coeff = c1[N+k-j]
+				if coeff != 0 {
+					coeff = Qp - coeff
+				}
+			}
+			// LWE convention is b - <a,s>; RLWE phase is c0 + c1*s.
+			// Therefore the extracted LWE vector uses a_j = -coeff.
+			if coeff == 0 {
+				a[j] = 0
+			} else {
+				a[j] = Qp - coeff
+			}
+		}
+		out[item] = LWECiphertext{A: a, B: c0[k]}
+	}
+	return out, nil
+}
+
+func tailLWEModSwitch(ct LWECiphertext, qFrom, qTo uint64) LWECiphertext {
+	out := LWECiphertext{A: make([]uint64, len(ct.A)), B: tailRoundedScaleCentered(ct.B, qFrom, qTo)}
+	for i := range ct.A {
+		out.A[i] = tailRoundedScaleCentered(ct.A[i], qFrom, qTo)
+	}
+	return out
+}
+
+func tailDecryptLWEPhase(ct LWECiphertext, secret []uint64, mod uint64) uint64 {
+	acc := ct.B % mod
+	for i, ai := range ct.A {
+		prod := tailMulMod(ai%mod, secret[i]%mod, mod)
+		acc = tailSubMod(acc, prod, mod)
+	}
+	return acc
+}
+
+func tailTargetRawPhasesSchemeD(y []uint64, scaleS, qPrime, t uint64) ([]uint64, error) {
+	invT, err := tailInvModUint64(t%qPrime, qPrime)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]uint64, len(y))
+	for i, yi := range y {
+		pt := tailMulMod(scaleS%t, yi%t, t)
+		out[i] = tailMulMod(pt, invT, qPrime)
+	}
+	return out, nil
+}
+
+type TailNoiseStats struct {
+	Count     int
+	NonZero   int
+	OverBound int
+	MaxAbs    int64
+	MaxIndex  int
+	Mean      float64
+	MeanAbs   float64
+	RMS       float64
+	StdDev    float64
+}
+
+type TailBigNoiseStats struct {
+	Count      int
+	NonZero    int
+	OverBound  int
+	MaxAbs     string
+	MaxAbsBits int
+	MaxIndex   int
+	MeanAbs    float64
+	RMS        float64
+}
+
+func tailComputeNoiseStatsBig(actual, target []*big.Int, mod *big.Int, bound *big.Int) TailBigNoiseStats {
+	st := TailBigNoiseStats{Count: len(actual), MaxIndex: -1, MaxAbs: "0"}
+	if mod == nil || mod.Sign() <= 0 {
+		return st
+	}
+	maxAbs := big.NewInt(0)
+	var sumAbs, sumSq float64
+	for i := range actual {
+		if i >= len(target) || actual[i] == nil || target[i] == nil {
+			continue
+		}
+		d := centeredModBig(new(big.Int).Sub(actual[i], target[i]), mod)
+		abs := new(big.Int).Abs(d)
+		if abs.Sign() != 0 {
+			st.NonZero++
+		}
+		if bound != nil && bound.Sign() > 0 && abs.Cmp(bound) >= 0 {
+			st.OverBound++
+		}
+		if st.MaxIndex < 0 || abs.Cmp(maxAbs) > 0 {
+			maxAbs.Set(abs)
+			st.MaxIndex = i
+		}
+		absFloat, _ := new(big.Float).SetInt(abs).Float64()
+		sumAbs += absFloat
+		sumSq += absFloat * absFloat
+	}
+	if st.Count > 0 {
+		st.MeanAbs = sumAbs / float64(st.Count)
+		st.RMS = math.Sqrt(sumSq / float64(st.Count))
+	}
+	st.MaxAbs = maxAbs.String()
+	if maxAbs.Sign() > 0 {
+		st.MaxAbsBits = maxAbs.BitLen() - 1
+	}
+	return st
+}
+
+func tailTargetRawPhasesFromPlainAtLevel(plain []uint64, scaleModT uint64, qLevel *big.Int, t uint64) ([]*big.Int, error) {
+	if qLevel == nil || qLevel.Sign() <= 0 {
+		return nil, errors.New("invalid non-positive Q level modulus")
+	}
+	tBig := new(big.Int).SetUint64(t)
+	invT := new(big.Int).ModInverse(tBig, qLevel)
+	if invT == nil {
+		return nil, fmt.Errorf("T=%d is not invertible modulo Q_level=%s", t, qLevel.String())
+	}
+	out := make([]*big.Int, len(plain))
+	for i, v := range plain {
+		coeffT := tailMulMod(scaleModT%t, v%t, t)
+		raw := new(big.Int).Mul(new(big.Int).SetUint64(coeffT), invT)
+		raw.Mod(raw, qLevel)
+		out[i] = centeredModBig(raw, qLevel)
+	}
+	return out, nil
+}
+
+func tailRLWEPhaseAtPositionsBig(params bfv.Parameters, ct *rlwe.Ciphertext, sk *rlwe.SecretKey, positions []int) ([]*big.Int, *big.Int, error) {
+	if ct == nil || sk == nil {
+		return nil, nil, errors.New("nil ciphertext or secret key")
+	}
+	level := ct.Level()
+	if level < 0 || level > params.MaxLevel() {
+		return nil, nil, fmt.Errorf("invalid ciphertext level %d", level)
+	}
+	N := params.N()
+	ringQ := params.RingQ().AtLevel(level)
+	c0 := tailPolyToCoeffNormal(ringQ, ct.Value[0], ct.IsNTT, ct.IsMontgomery)
+	c1 := tailPolyToCoeffNormal(ringQ, ct.Value[1], ct.IsNTT, ct.IsMontgomery)
+	skPoly := tailPolyToCoeffNormal(ringQ, sk.Value.Q, true, true)
+	phasePoly := tailMulPolyCoeffNormal(ringQ, c1, skPoly)
+	ringQ.Add(c0, phasePoly, phasePoly)
+	phaseAll := polyToBigintCentered(ringQ, phasePoly, false, false)
+	out := make([]*big.Int, len(positions))
+	for i, pos := range positions {
+		if pos < 0 || pos >= N {
+			return nil, nil, fmt.Errorf("position %d outside [0,%d)", pos, N)
+		}
+		out[i] = new(big.Int).Set(phaseAll[pos])
+	}
+	return out, ringQ.Modulus(), nil
+}
+
+func tailComputeNoiseStats(actual, target []uint64, mod uint64, bound uint64) TailNoiseStats {
+	st := TailNoiseStats{Count: len(actual), MaxIndex: -1}
+	var sumSigned, sumAbs, sumSq float64
+	for i := range actual {
+		d := centeredDiff(actual[i], target[i], mod)
+		ad := d
+		if ad < 0 {
+			ad = -ad
+		}
+		if ad != 0 {
+			st.NonZero++
+		}
+		if bound > 0 && uint64(ad) >= bound {
+			st.OverBound++
+		}
+		if ad > st.MaxAbs || st.MaxIndex < 0 {
+			st.MaxAbs = ad
+			st.MaxIndex = i
+		}
+		df := float64(d)
+		af := float64(ad)
+		sumSigned += df
+		sumAbs += af
+		sumSq += df * df
+	}
+	if st.Count > 0 {
+		invN := 1.0 / float64(st.Count)
+		st.Mean = sumSigned * invN
+		st.MeanAbs = sumAbs * invN
+		st.RMS = math.Sqrt(sumSq * invN)
+		variance := sumSq*invN - st.Mean*st.Mean
+		if variance < 0 && variance > -1e-9 {
+			variance = 0
+		}
+		if variance > 0 {
+			st.StdDev = math.Sqrt(variance)
+		}
+	}
+	return st
+}
+
+func printTailOutputNoiseTable(actual, target, decoded, expected []uint64, mod uint64, radius uint64, maxRows int) {
+	if len(actual) == 0 || len(target) == 0 || mod == 0 {
+		return
+	}
+	n := len(actual)
+	if len(target) < n {
+		n = len(target)
+	}
+	if maxRows <= 0 || maxRows > n {
+		maxRows = n
+	}
+	fmt.Println()
+	fmt.Println("========== Output LWE noise table ==========")
+	fmt.Printf("showing %d/%d rows; radius=%d\n", maxRows, n, radius)
+	fmt.Println("i | phase_T | target_T | noise | |noise| | decoded | expected | ok")
+	fmt.Println("--+---------+----------+-------+---------+---------+----------+----")
+	for i := 0; i < maxRows; i++ {
+		d := centeredDiff(actual[i], target[i], mod)
+		ad := d
+		if ad < 0 {
+			ad = -ad
+		}
+		decStr := "-"
+		if i < len(decoded) {
+			decStr = fmt.Sprintf("%d", decoded[i])
+		}
+		expStr := "-"
+		if i < len(expected) {
+			expStr = fmt.Sprintf("%d", expected[i])
+		}
+		ok := radius == 0 || uint64(ad) < radius
+		if i < len(decoded) && i < len(expected) {
+			ok = ok && decoded[i] == expected[i]
+		}
+		fmt.Printf("%d | %d | %d | %d | %d | %s | %s | %v\n", i, actual[i], target[i], d, ad, decStr, expStr, ok)
+	}
+	if maxRows < n {
+		fmt.Printf("... %d more rows omitted; increase -output-noise-table-limit to show more.\n", n-maxRows)
+	}
+	fmt.Println("===========================================")
+}
+
+type TailSecretInfo struct {
+	Name string
+	H    int
+	Pos  int
+	Neg  int
+}
+
+func tailSampleLWESecret(n int, dist string, h int, rng *rand.Rand) ([]int64, TailSecretInfo, error) {
+	d := strings.ToLower(strings.TrimSpace(dist))
+	switch d {
+	case "sparseternary", "balanced-sparseternary", "balanced":
+		if h <= 0 {
+			return nil, TailSecretInfo{}, fmt.Errorf("-lwe-secret sparseternary requires -lwe-h > 0")
+		}
+		if h > n {
+			return nil, TailSecretInfo{}, fmt.Errorf("-lwe-h=%d exceeds n=%d", h, n)
+		}
+		if h%2 != 0 {
+			return nil, TailSecretInfo{}, fmt.Errorf("sparseternary requires even -lwe-h, got %d", h)
+		}
+		out := make([]int64, n)
+		perm := rng.Perm(n)
+		pos := h / 2
+		neg := h / 2
+		for i := 0; i < pos; i++ {
+			out[perm[i]] = 1
+		}
+		for i := 0; i < neg; i++ {
+			out[perm[pos+i]] = -1
+		}
+		return out, TailSecretInfo{Name: fmt.Sprintf("SparseTernary(+1=%d,-1=%d,n=%d)", pos, neg, n), H: h, Pos: pos, Neg: neg}, nil
+	case "fixedweight", "fixed-weight":
+		if h <= 0 || h > n {
+			return nil, TailSecretInfo{}, fmt.Errorf("invalid fixed-weight h=%d for n=%d", h, n)
+		}
+		out := make([]int64, n)
+		perm := rng.Perm(n)
+		pos, neg := 0, 0
+		for i := 0; i < h; i++ {
+			if rng.Intn(2) == 0 {
+				out[perm[i]] = -1
+				neg++
+			} else {
+				out[perm[i]] = 1
+				pos++
+			}
+		}
+		return out, TailSecretInfo{Name: fmt.Sprintf("FixedWeightRandomSigns(h=%d,n=%d)", h, n), H: h, Pos: pos, Neg: neg}, nil
+	case "ternary", "uniformternary", "uniform-ternary":
+		out := make([]int64, n)
+		pos, neg, hw := 0, 0, 0
+		for i := range out {
+			out[i] = int64(rng.Intn(3) - 1)
+			if out[i] > 0 {
+				pos++
+				hw++
+			} else if out[i] < 0 {
+				neg++
+				hw++
+			}
+		}
+		return out, TailSecretInfo{Name: fmt.Sprintf("UniformTernary(n=%d)", n), H: hw, Pos: pos, Neg: neg}, nil
+	case "sign", "dense-sign":
+		out := make([]int64, n)
+		pos, neg := 0, 0
+		for i := range out {
+			if rng.Intn(2) == 0 {
+				out[i] = -1
+				neg++
+			} else {
+				out[i] = 1
+				pos++
+			}
+		}
+		return out, TailSecretInfo{Name: fmt.Sprintf("DenseSign(n=%d)", n), H: n, Pos: pos, Neg: neg}, nil
+	default:
+		return nil, TailSecretInfo{}, fmt.Errorf("unknown -lwe-secret=%q; use sparseternary, fixedweight, ternary, or sign", dist)
+	}
+}
+
+func tailSignedCoeffsToMod(coeffs []int64, mod uint64) []uint64 {
+	out := make([]uint64, len(coeffs))
+	for i, c := range coeffs {
+		out[i] = tailSignedToMod(c, mod)
+	}
+	return out
+}
+
+func tailSignedToMod(c int64, mod uint64) uint64 {
+	if c >= 0 {
+		return uint64(c) % mod
+	}
+	v := uint64(-c) % mod
+	if v == 0 {
+		return 0
+	}
+	return mod - v
+}
+
+func tailPolyToCoeffNormal(ringQ *ring.Ring, pIn ring.Poly, isNTT, isMontgomery bool) ring.Poly {
+	out := ringQ.NewPoly()
+	level := len(out.Coeffs) - 1
+	if isNTT {
+		ringQ.INTT(pIn, out)
+	} else {
+		out.CopyLvl(level, pIn)
+	}
+	if isMontgomery {
+		ringQ.IMForm(out, out)
+	}
+	return out
+}
+
+func tailManualFinalKeySwitchNoSpecialQPrime(params bfv.Parameters, ct *rlwe.Ciphertext, skIn *rlwe.SecretKey, skOutSigned []int64, baseLog int, centered bool, sigma float64, rng *rand.Rand) (*rlwe.Ciphertext, int, error) {
+	if ct.Level() != 0 {
+		return nil, 0, fmt.Errorf("manual final key-switch expects level 0, got %d", ct.Level())
+	}
+	if baseLog <= 0 || baseLog >= 63 {
+		return nil, 0, fmt.Errorf("invalid base log %d", baseLog)
+	}
+
+	ringQ := params.RingQ().AtLevel(0)
+	Qp := params.Q()[0]
+	N := params.N()
+	base := uint64(1) << baseLog
+	if centered && baseLog < 2 {
+		return nil, 0, fmt.Errorf("centered signed decomposition requires baseLog >= 2")
+	}
+	digits := (bits.Len64(Qp-1) + baseLog - 1) / baseLog
+	if centered {
+		digits += 3
+	}
+
+	c0 := tailPolyToCoeffNormal(ringQ, ct.Value[0], ct.IsNTT, ct.IsMontgomery)
+	c1 := tailPolyToCoeffNormal(ringQ, ct.Value[1], ct.IsNTT, ct.IsMontgomery)
+	skInCoeffPoly := tailPolyToCoeffNormal(ringQ, skIn.Value.Q, true, true)
+	skInCoeff := skInCoeffPoly.Coeffs[0]
+
+	digitCoeffs, err := tailDecomposePolyDigits(c1.Coeffs[0], Qp, baseLog, digits, centered)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	skOutPoly := ringQ.NewPoly()
+	for i, c := range skOutSigned {
+		if i >= N {
+			break
+		}
+		skOutPoly.Coeffs[0][i] = tailSignedToMod(c, Qp)
+	}
+
+	out0 := ringQ.NewPoly()
+	out1 := ringQ.NewPoly()
+	copy(out0.Coeffs[0], c0.Coeffs[0])
+
+	powB := uint64(1)
+	for d := 0; d < digits; d++ {
+		digitPoly := ringQ.NewPoly()
+		copy(digitPoly.Coeffs[0], digitCoeffs[d])
+
+		msg := ringQ.NewPoly()
+		for i := 0; i < N; i++ {
+			msg.Coeffs[0][i] = tailMulMod(powB, skInCoeff[i], Qp)
+		}
+
+		aPoly := ringQ.NewPoly()
+		for i := 0; i < N; i++ {
+			aPoly.Coeffs[0][i] = uint64(rng.Int63n(int64(Qp)))
+		}
+		aTimesSout := tailMulPolyCoeffNormal(ringQ, aPoly, skOutPoly)
+
+		k0 := ringQ.NewPoly()
+		for i := 0; i < N; i++ {
+			errCoeff := tailSampleSmallGaussianMod(sigma, Qp, rng)
+			v := tailAddMod(msg.Coeffs[0][i], errCoeff, Qp)
+			v = tailSubMod(v, aTimesSout.Coeffs[0][i], Qp)
+			k0.Coeffs[0][i] = v
+		}
+		k1 := aPoly
+
+		prod0 := tailMulPolyCoeffNormal(ringQ, digitPoly, k0)
+		prod1 := tailMulPolyCoeffNormal(ringQ, digitPoly, k1)
+		ringQ.Add(out0, prod0, out0)
+		ringQ.Add(out1, prod1, out1)
+
+		powB = tailMulMod(powB, base%Qp, Qp)
+	}
+
+	out := bfv.NewCiphertext(params, 1, 0)
+	out.Value[0].Copy(out0)
+	out.Value[1].Copy(out1)
+	out.IsNTT = false
+	out.IsMontgomery = false
+	out.IsBatched = false
+	out.Scale = ct.Scale
+	return out, digits, nil
+}
+
+func tailMulPolyCoeffNormal(ringQ *ring.Ring, a, b ring.Poly) ring.Poly {
+	pa := ringQ.NewPoly()
+	pb := ringQ.NewPoly()
+	pc := ringQ.NewPoly()
+	pa.Copy(a)
+	pb.Copy(b)
+	ringQ.NTT(pa, pa)
+	ringQ.MForm(pa, pa)
+	ringQ.NTT(pb, pb)
+	ringQ.MForm(pb, pb)
+	ringQ.MulCoeffsMontgomery(pa, pb, pc)
+	ringQ.INTT(pc, pc)
+	ringQ.IMForm(pc, pc)
+	return pc
+}
+
+func tailDecomposePolyDigits(coeffs []uint64, mod uint64, baseLog, digits int, centered bool) ([][]uint64, error) {
+	out := make([][]uint64, digits)
+	for d := 0; d < digits; d++ {
+		out[d] = make([]uint64, len(coeffs))
+	}
+	base := int64(1) << baseLog
+	if !centered {
+		mask := uint64(1<<baseLog) - 1
+		for d := 0; d < digits; d++ {
+			shift := d * baseLog
+			for i, x := range coeffs {
+				if shift >= 64 {
+					out[d][i] = 0
+				} else {
+					out[d][i] = (x >> shift) & mask
+				}
+			}
+		}
+		return out, nil
+	}
+	if baseLog < 2 {
+		return nil, fmt.Errorf("centered decomposition requires baseLog >= 2")
+	}
+	for i, x := range coeffs {
+		carry := tailCenteredLift(x, mod)
+		for d := 0; d < digits; d++ {
+			rem := carry % base
+			if rem < 0 {
+				rem += base
+			}
+			if rem >= base/2 {
+				rem -= base
+			}
+			out[d][i] = tailSignedToMod(rem, mod)
+			carry = (carry - rem) / base
+		}
+		if carry != 0 {
+			return nil, fmt.Errorf("centered decomposition did not terminate at coeff %d; increase guard digits", i)
+		}
+	}
+	return out, nil
+}
+
+func tailCenteredLift(x, mod uint64) int64 {
+	x %= mod
+	if x > mod/2 {
+		return -int64(mod - x)
+	}
+	return int64(x)
+}
+
+func tailSampleSmallGaussianMod(sigma float64, mod uint64, rng *rand.Rand) uint64 {
+	if sigma == 0 {
+		return 0
+	}
+	e := int64(math.Round(rng.NormFloat64() * sigma))
+	return tailSignedToMod(e, mod)
+}
+
+func tailAddMod(a, b, mod uint64) uint64 {
+	c := a + b
+	if c >= mod || c < a {
+		c -= mod
+	}
+	return c
+}
+
+func tailSubMod(a, b, mod uint64) uint64 {
+	if a >= b {
+		return (a - b) % mod
+	}
+	return mod - ((b - a) % mod)
+}
+
+func tailMulMod(a, b, mod uint64) uint64 {
+	if mod == 0 {
+		return 0
+	}
+	if bits.Len64(a)+bits.Len64(b) <= 63 {
+		return (a * b) % mod
+	}
+	A := new(big.Int).SetUint64(a)
+	B := new(big.Int).SetUint64(b)
+	M := new(big.Int).SetUint64(mod)
+	A.Mul(A, B).Mod(A, M)
+	return A.Uint64()
+}
+
+func tailRoundedScaleCentered(x, q, t uint64) uint64 {
+	if x > q/2 {
+		mag := q - x
+		y := tailDivRoundMul(mag, t, q)
+		y %= t
+		if y == 0 {
+			return 0
+		}
+		return t - y
+	}
+	return tailDivRoundMul(x, t, q) % t
+}
+
+func tailDivRoundMul(x, mul, div uint64) uint64 {
+	X := new(big.Int).SetUint64(x)
+	M := new(big.Int).SetUint64(mul)
+	D := new(big.Int).SetUint64(div)
+	X.Mul(X, M)
+	X.Add(X, new(big.Int).Rsh(new(big.Int).Set(D), 1))
+	X.Quo(X, D)
+	return X.Uint64()
+}
+
+func tailInvModUint64(a, mod uint64) (uint64, error) {
+	A := new(big.Int).SetUint64(a)
+	M := new(big.Int).SetUint64(mod)
+	I := new(big.Int).ModInverse(A, M)
+	if I == nil {
+		return 0, fmt.Errorf("%d has no inverse mod %d", a, mod)
+	}
+	return I.Uint64(), nil
+}
+
+func tailGCDUint64(a, b uint64) uint64 {
+	for b != 0 {
+		a, b = b, a%b
+	}
+	return a
+}
+
+func scaleModUint64(scale rlwe.Scale, mod uint64) uint64 {
+	if mod == 0 {
+		return 0
+	}
+	z := scale.BigInt()
+	z.Mod(z, new(big.Int).SetUint64(mod))
+	return z.Uint64()
+}
+
+type m1LevelScaleState struct {
+	Level int
+	Scale uint64
+}
+
+func estimatePolynomialInputScaleModT(params bfv.Parameters, polyInputLevel int, useLWEInput bool, modT uint64) (uint64, error) {
+	if polyInputLevel < 0 || polyInputLevel > params.MaxLevel() {
+		return 0, fmt.Errorf("invalid polynomial input level L%d for MaxLevel=%d", polyInputLevel, params.MaxLevel())
+	}
+	// Fresh BGV/BFV raw phase and the LWE->RLWE Step1 raw phase both start with
+	// metadata scale 1 modulo T in this prototype. If Step1 normalization drops
+	// top levels, each BGV rescale multiplies the metadata scale by Q_i^{-1} mod T.
+	if useLWEInput {
+		return tailScaleAfterRescaleToLevel(params, 1, params.MaxLevel(), polyInputLevel, modT)
+	}
+	return 1 % modT, nil
+}
+
+func m1RescaleState(params bfv.Parameters, st m1LevelScaleState, modT uint64) (m1LevelScaleState, error) {
+	if st.Level <= 0 {
+		return st, fmt.Errorf("cannot rescale state at L%d", st.Level)
+	}
+	invQ, err := tailInvModUint64(params.Q()[st.Level]%modT, modT)
+	if err != nil {
+		return st, fmt.Errorf("Q[%d]=%d is not invertible modulo T=%d", st.Level, params.Q()[st.Level], modT)
+	}
+	return m1LevelScaleState{Level: st.Level - 1, Scale: tailMulMod(st.Scale%modT, invQ, modT)}, nil
+}
+
+func m1MulPlainRescaleState(params bfv.Parameters, st m1LevelScaleState, modT uint64) (m1LevelScaleState, error) {
+	// The plaintext vectors used by this program have unit metadata scale; the
+	// following BGV rescale is therefore the only scale-changing part.
+	return m1RescaleState(params, st, modT)
+}
+
+func m1MulCtRelinRescaleState(params bfv.Parameters, a, b m1LevelScaleState, modT uint64) (m1LevelScaleState, error) {
+	level := minInt(a.Level, b.Level)
+	if level <= 0 {
+		return m1LevelScaleState{}, fmt.Errorf("cannot multiply/rescale at min level L%d", level)
+	}
+	prodScale := tailMulMod(a.Scale%modT, b.Scale%modT, modT)
+	invQ, err := tailInvModUint64(params.Q()[level]%modT, modT)
+	if err != nil {
+		return m1LevelScaleState{}, fmt.Errorf("Q[%d]=%d is not invertible modulo T=%d", level, params.Q()[level], modT)
+	}
+	return m1LevelScaleState{Level: level - 1, Scale: tailMulMod(prodScale, invQ, modT)}, nil
+}
+func m1MulCtRelinNoRescaleState(a, b m1LevelScaleState, modT uint64) (m1LevelScaleState, error) {
+	level := minInt(a.Level, b.Level)
+	if level < 0 {
+		return m1LevelScaleState{}, fmt.Errorf("invalid multiply level L%d", level)
+	}
+	prodScale := tailMulMod(a.Scale%modT, b.Scale%modT, modT)
+	return m1LevelScaleState{Level: level, Scale: prodScale}, nil
+}
+
+func m1DropStateToLevel(st m1LevelScaleState, targetLevel int) (m1LevelScaleState, error) {
+	if targetLevel < 0 || targetLevel > st.Level {
+		return st, fmt.Errorf("cannot drop state from L%d to L%d", st.Level, targetLevel)
+	}
+	st.Level = targetLevel
+	return st, nil
+}
+
+func estimateMonomialGenExtraState(params bfv.Parameters, input m1LevelScaleState, m, s int, wantExtra bool, modT uint64) (out m1LevelScaleState, extra m1LevelScaleState, hasExtra bool, err error) {
+	if m <= 0 || !isPow2(m) {
+		return out, extra, false, fmt.Errorf("m=%d must be a positive power of two", m)
+	}
+	if s <= 0 || !isPow2(s) {
+		return out, extra, false, fmt.Errorf("s=%d must be a positive power of two", s)
+	}
+	slots := params.MaxSlots()
+	if slots%m != 0 {
+		return out, extra, false, fmt.Errorf("m=%d must divide MaxSlots=%d", m, slots)
+	}
+	r := slots / m
+	if s > r || r%s != 0 {
+		return out, extra, false, fmt.Errorf("invalid MonomialGen shape: s=%d, r=%d", s, r)
+	}
+	if s == 1 {
+		// MonomialGen's constant case builds zero from the input ciphertext and adds
+		// a plaintext. The output keeps the input ciphertext metadata scale.
+		return input, m1LevelScaleState{}, false, nil
+	}
+	ell := bits.TrailingZeros(uint(s))
+	xPow := make([]m1LevelScaleState, ell)
+	xPow[0] = input
+	for i := 1; i < ell; i++ {
+		xPow[i], err = m1MulCtRelinRescaleState(params, xPow[i-1], xPow[i-1], modT)
+		if err != nil {
+			return out, extra, false, fmt.Errorf("scale simulation for xPow[%d] failed: %w", i, err)
+		}
+	}
+	if wantExtra {
+		extra = xPow[ell-1]
+		hasExtra = true
+	}
+	acc, err := m1MulPlainRescaleState(params, xPow[0], modT)
+	if err != nil {
+		return out, extra, hasExtra, fmt.Errorf("scale simulation for first masked plaintext multiply failed: %w", err)
+	}
+	for i := 1; i < ell; i++ {
+		factor, err := m1MulPlainRescaleState(params, xPow[i], modT)
+		if err != nil {
+			return out, extra, hasExtra, fmt.Errorf("scale simulation for masked plaintext multiply %d failed: %w", i, err)
+		}
+		acc, err = m1MulCtRelinRescaleState(params, acc, factor, modT)
+		if err != nil {
+			return out, extra, hasExtra, fmt.Errorf("scale simulation for accumulator multiply %d failed: %w", i, err)
+		}
+	}
+	return acc, extra, hasExtra, nil
+}
+
+func estimatePolyEvalOutputState(params bfv.Parameters, modT uint64, m, d int, inputLevel int, inputScale uint64, dropBeforeLT bool, ltLevel int, ltPostLevel int, deferLTPostRescale bool, leadingTermEvaluated bool) (m1LevelScaleState, error) {
+	if d <= 0 || !isPow2(d) {
+		return m1LevelScaleState{}, fmt.Errorf("d=%d must be a positive power of two", d)
+	}
+	input := m1LevelScaleState{Level: inputLevel, Scale: inputScale % modT}
+	r := params.MaxSlots() / m
+	if m == 1 && d <= r {
+		ctBase, ctHalf, hasHalf, err := estimateMonomialGenExtraState(params, input, m, d, leadingTermEvaluated, modT)
+		if err != nil {
+			return m1LevelScaleState{}, err
+		}
+		if !leadingTermEvaluated {
+			return ctBase, nil
+		}
+		var ctPowD m1LevelScaleState
+		if d == 1 {
+			ctPowD = input
+		} else {
+			if !hasHalf {
+				return m1LevelScaleState{}, errors.New("missing x^(d/2) scale state")
+			}
+			var err error
+			ctPowD, err = m1MulCtRelinRescaleState(params, ctHalf, ctHalf, modT)
+			if err != nil {
+				return m1LevelScaleState{}, err
+			}
+		}
+		ctLead, err := m1MulPlainRescaleState(params, ctPowD, modT)
+		if err != nil {
+			return m1LevelScaleState{}, err
+		}
+		outLevel := minInt(ctBase.Level, ctLead.Level)
+		ctBase, err = m1DropStateToLevel(ctBase, outLevel)
+		if err != nil {
+			return m1LevelScaleState{}, err
+		}
+		return ctBase, nil
+	}
+	if d <= r || d > r*r || d%r != 0 {
+		return m1LevelScaleState{}, fmt.Errorf("Algorithm 5 scale simulation requires r < d <= r^2 and r|d unless m=1 direct path, got d=%d r=%d m=%d", d, r, m)
+	}
+	s := d / r
+	ctP, ctHalf, hasHalf, err := estimateMonomialGenExtraState(params, input, m, r, true, modT)
+	if err != nil {
+		return m1LevelScaleState{}, fmt.Errorf("first MonomialGen scale simulation failed: %w", err)
+	}
+	if !hasHalf {
+		return m1LevelScaleState{}, errors.New("missing x^(r/2) scale state")
+	}
+	ctR, err := m1MulCtRelinRescaleState(params, ctHalf, ctHalf, modT)
+	if err != nil {
+		return m1LevelScaleState{}, fmt.Errorf("x^r scale simulation failed: %w", err)
+	}
+	ctG, ctDHalf, hasDHalf, err := estimateMonomialGenExtraState(params, ctR, m, s, true, modT)
+	if err != nil {
+		return m1LevelScaleState{}, fmt.Errorf("second MonomialGen scale simulation failed: %w", err)
+	}
+	if !hasDHalf {
+		return m1LevelScaleState{}, errors.New("missing x^(d/2) scale state")
+	}
+	ltInputLevel, ltOutputLevel, err := resolveParallelLTLevelPolicy(ctP.Level, ctG.Level, dropBeforeLT, ltLevel, ltPostLevel, deferLTPostRescale)
+	if err != nil {
+		return m1LevelScaleState{}, err
+	}
+	ctP, err = m1DropStateToLevel(ctP, ltInputLevel)
+	if err != nil {
+		return m1LevelScaleState{}, err
+	}
+	ctY := ctP
+	if ltOutputLevel >= 0 {
+		for ctY.Level > ltOutputLevel {
+			ctY, err = m1RescaleState(params, ctY, modT)
+			if err != nil {
+				return m1LevelScaleState{}, fmt.Errorf("post-LT scale rescale failed: %w", err)
+			}
+		}
+	}
+	var collapsed m1LevelScaleState
+	if globalDeferPointwiseRescale && m == 1 {
+		collapsed, err = m1MulCtRelinNoRescaleState(ctY, ctG, modT)
+		if err != nil {
+			return m1LevelScaleState{}, fmt.Errorf("collapsed ct3*ct2 no-rescale scale simulation failed: %w", err)
+		}
+		collapsed, err = m1RescaleState(params, collapsed, modT)
+		if err != nil {
+			return m1LevelScaleState{}, fmt.Errorf("deferred rescale after RotateAndSum scale simulation failed: %w", err)
+		}
+	} else {
+		collapsed, err = m1MulCtRelinRescaleState(params, ctY, ctG, modT)
+		if err != nil {
+			return m1LevelScaleState{}, fmt.Errorf("collapsed ct3*ct2 scale simulation failed: %w", err)
+		}
+	}
+	ctBase := collapsed
+	if !leadingTermEvaluated {
+		return ctBase, nil
+	}
+	ctPowD, err := m1MulCtRelinRescaleState(params, ctDHalf, ctDHalf, modT)
+	if err != nil {
+		return m1LevelScaleState{}, fmt.Errorf("x^d scale simulation failed: %w", err)
+	}
+	ctLead, err := m1MulPlainRescaleState(params, ctPowD, modT)
+	if err != nil {
+		return m1LevelScaleState{}, fmt.Errorf("leading plaintext multiply scale simulation failed: %w", err)
+	}
+	outLevel := minInt(ctBase.Level, ctLead.Level)
+	ctBase, err = m1DropStateToLevel(ctBase, outLevel)
+	if err != nil {
+		return m1LevelScaleState{}, err
+	}
+	return ctBase, nil
+}
+
+func estimateM1GammaOneQ1TargetResidue(params bfv.Parameters, modT uint64, m int, d int, inputLevel int, inputScale uint64, dropBeforeLT bool, ltLevel int, ltPostLevel int, deferLTPostRescale bool, leadingTermEvaluated bool, plannedOutputLevel int) (targetResidue uint64, outputScale uint64, tailRestProduct uint64, oldGamma uint64, oldGammaInv uint64, err error) {
+	out, err := estimatePolyEvalOutputState(params, modT, m, d, inputLevel, inputScale, dropBeforeLT, ltLevel, ltPostLevel, deferLTPostRescale, leadingTermEvaluated)
+	if err != nil {
+		return 0, 0, 0, 0, 0, err
+	}
+	if out.Level != plannedOutputLevel {
+		return 0, 0, 0, 0, 0, fmt.Errorf("scale simulator output level L%d disagrees with planner output level L%d", out.Level, plannedOutputLevel)
+	}
+	outputScale = out.Scale % modT
+	if out.Level <= 0 {
+		// There is no post-polynomial tail rescale left. In this case gamma is the
+		// polynomial-output scale itself. The last polynomial rescale has consumed
+		// Q[1], so with the old chain:
+		//     outputScale_old = preDropScale * Q[1]^{-1} mod T.
+		// To force the new output scale to be 1, choose
+		//     Q[1]_new = preDropScale = outputScale_old * Q[1]_old mod T.
+		if len(params.Q()) <= 1 {
+			return 0, 0, 0, 0, 0, fmt.Errorf("output level L%d has no tail modulus and the Q-chain has no Q[1] to use as the last polynomial modulus", out.Level)
+		}
+		targetResidue = tailMulMod(outputScale, params.Q()[1]%modT, modT)
+		oldGamma = outputScale
+		oldGammaInv, err = tailInvModUint64(oldGamma, modT)
+		if err != nil {
+			return 0, 0, 0, 0, 0, err
+		}
+		return targetResidue, outputScale, 1, oldGamma, oldGammaInv, nil
+	}
+	tailRestProduct = uint64(1)
+	for i := 2; i <= out.Level; i++ {
+		tailRestProduct = tailMulMod(tailRestProduct, params.Q()[i]%modT, modT)
+	}
+	invRest, err := tailInvModUint64(tailRestProduct, modT)
+	if err != nil {
+		return 0, 0, 0, 0, 0, fmt.Errorf("product Q[2..L%d]=%d is not invertible modulo T=%d", out.Level, tailRestProduct, modT)
+	}
+	targetResidue = tailMulMod(outputScale, invRest, modT)
+	oldDroppedProduct := tailMulMod(params.Q()[1]%modT, tailRestProduct, modT)
+	invOldDropped, err := tailInvModUint64(oldDroppedProduct, modT)
+	if err != nil {
+		return 0, 0, 0, 0, 0, err
+	}
+	oldGamma = tailMulMod(outputScale, invOldDropped, modT)
+	oldGammaInv, err = tailInvModUint64(oldGamma, modT)
+	if err != nil {
+		return 0, 0, 0, 0, 0, err
+	}
+	return targetResidue, outputScale, tailRestProduct, oldGamma, oldGammaInv, nil
+}
+
+type M1GammaOneQInfo struct {
+	Index                    int
+	Mode                     string
+	Prime                    uint64
+	Bits                     int
+	RequestedBits            int
+	TargetResidueModT        uint64
+	AutoComputed             bool
+	OutputScaleModT          uint64
+	TailRestProductModT      uint64
+	PredictedOldGammaModT    uint64
+	PredictedOldGammaInvModT uint64
+	OldGammaInvModT          uint64
+	OldGammaModT             uint64
+	OldQ1ResidueModT         uint64
+	OutputLevel              int
+	ProductDroppedModT       uint64
+	FinalQPrime              uint64
+	FinalQPrimeBits          int
+}
+
+func specializeM1GammaOneQFromObservedGamma(params bfv.Parameters, literal bfv.ParametersLiteral, logQBits []int, logN int, plainMod uint64, m int, outputLevel int, oldGammaInv uint64, manualTargetResidue uint64, autoTargetResidue uint64, autoOutputScale uint64, autoTailRestProduct uint64, autoOldGamma uint64, autoOldGammaInv uint64, maxExtraBits int) (bfv.ParametersLiteral, []int, *M1GammaOneQInfo, error) {
+	if m != 1 {
+		return literal, logQBits, nil, fmt.Errorf("-m1-gamma-one-q requires m=1, got m=%d", m)
+	}
+	mode := "tail-Q[1]"
+	if outputLevel <= 0 {
+		mode = "poly-last-Q[1]"
+	}
+	if len(params.Q()) <= 1 || len(logQBits) <= 1 {
+		return literal, logQBits, nil, fmt.Errorf("Q-chain too short for m=1 gamma-one specialization: outputLevel=L%d, #Q=%d", outputLevel, len(params.Q()))
+	}
+	if outputLevel > 0 && len(params.Q()) <= outputLevel {
+		return literal, logQBits, nil, fmt.Errorf("Q-chain too short for m=1 gamma-one tail specialization: outputLevel=L%d, #Q=%d", outputLevel, len(params.Q()))
+	}
+	if maxExtraBits < 0 {
+		return literal, logQBits, nil, fmt.Errorf("max extra bits must be non-negative, got %d", maxExtraBits)
+	}
+
+	oldGamma := uint64(0)
+	autoComputed := false
+	targetResidue := manualTargetResidue % plainMod
+	if targetResidue == 0 && oldGammaInv != 0 {
+		var err error
+		oldGamma, err = tailInvModUint64(oldGammaInv%plainMod, plainMod)
+		if err != nil {
+			return literal, logQBits, nil, fmt.Errorf("old gamma^{-1}=%d is not invertible modulo T=%d: %w", oldGammaInv, plainMod, err)
+		}
+		// Legacy mode. Old run: gamma_old = inputScale / (Q[1]*...*Q[Lout]) mod T.
+		// New run changes only Q[1]. To force gamma_new = 1, we need
+		//     Q[1]_new * Q[2]*...*Q[Lout] = inputScale
+		// hence Q[1]_new = gamma_old * Q[1]_old mod T.
+		targetResidue = tailMulMod(oldGamma, params.Q()[1]%plainMod, plainMod)
+	}
+	if targetResidue == 0 {
+		if autoTargetResidue == 0 {
+			return literal, logQBits, nil, fmt.Errorf("automatic m=1 gamma-one target residue is zero; pass -m1-gamma-one-target-residue or -m1-gamma-one-prev-gamma-inv explicitly")
+		}
+		targetResidue = autoTargetResidue % plainMod
+		autoComputed = true
+	}
+	if targetResidue == 0 || tailGCDUint64(targetResidue, plainMod) != 1 {
+		return literal, logQBits, nil, fmt.Errorf("target residue %d is not a unit modulo T=%d", targetResidue, plainMod)
+	}
+
+	requestedBits := logQBits[1]
+	prime, actualBits, err := findSpecialNTTPrimeCRT(logN, requestedBits, requestedBits+maxExtraBits, plainMod, targetResidue)
+	if err != nil {
+		return literal, logQBits, nil, err
+	}
+
+	q := append([]uint64(nil), params.Q()...)
+	p := append([]uint64(nil), params.P()...)
+	for i, qi := range q {
+		if i != 1 && qi == prime {
+			return literal, logQBits, nil, fmt.Errorf("special Q[1]=%d duplicates existing Q[%d]", prime, i)
+		}
+	}
+	for i, pi := range p {
+		if pi == prime {
+			return literal, logQBits, nil, fmt.Errorf("special Q[1]=%d duplicates P[%d]", prime, i)
+		}
+	}
+	q[1] = prime
+	newLogQBits := append([]int(nil), logQBits...)
+	newLogQBits[1] = actualBits
+
+	productDropped := uint64(1)
+	for i := 1; i <= outputLevel; i++ {
+		productDropped = tailMulMod(productDropped, q[i]%plainMod, plainMod)
+	}
+
+	newLiteral := bfv.ParametersLiteral{
+		LogN:             logN,
+		Q:                q,
+		P:                p,
+		PlaintextModulus: plainMod,
+	}
+	info := &M1GammaOneQInfo{
+		Index:                    1,
+		Mode:                     mode,
+		Prime:                    prime,
+		Bits:                     actualBits,
+		RequestedBits:            requestedBits,
+		TargetResidueModT:        targetResidue,
+		AutoComputed:             autoComputed,
+		OutputScaleModT:          autoOutputScale % plainMod,
+		TailRestProductModT:      autoTailRestProduct % plainMod,
+		PredictedOldGammaModT:    autoOldGamma % plainMod,
+		PredictedOldGammaInvModT: autoOldGammaInv % plainMod,
+		OldGammaInvModT:          oldGammaInv % plainMod,
+		OldGammaModT:             oldGamma,
+		OldQ1ResidueModT:         params.Q()[1] % plainMod,
+		OutputLevel:              outputLevel,
+		ProductDroppedModT:       productDropped,
+		FinalQPrime:              q[0],
+		FinalQPrimeBits:          bits.Len64(q[0]),
+	}
+	return newLiteral, newLogQBits, info, nil
+}
+
+func findSpecialNTTPrimeCRT(logN int, minBits, maxBits int, plainMod uint64, residueModT uint64) (uint64, int, error) {
+	if minBits <= 1 {
+		return 0, 0, fmt.Errorf("invalid target bit-size %d", minBits)
+	}
+	if maxBits < minBits {
+		return 0, 0, fmt.Errorf("maxBits=%d < minBits=%d", maxBits, minBits)
+	}
+	if logN < 1 || logN+1 >= 63 {
+		return 0, 0, fmt.Errorf("unsupported logN=%d for special prime search", logN)
+	}
+	nttMod := uint64(1) << (logN + 1) // q == 1 mod 2N.
+	residue, step, err := crtUint64(1%nttMod, nttMod, residueModT%plainMod, plainMod)
+	if err != nil {
+		return 0, 0, err
+	}
+	if residue == 0 {
+		residue = step
+	}
+	for bitsTarget := minBits; bitsTarget <= maxBits; bitsTarget++ {
+		if bitsTarget >= 63 {
+			return 0, 0, fmt.Errorf("special prime search is limited to <63 bits, got %d", bitsTarget)
+		}
+		lo := uint64(1) << (bitsTarget - 1)
+		hi := uint64(1) << bitsTarget
+		k := uint64(0)
+		if residue < lo {
+			k = (lo - residue + step - 1) / step
+		}
+		for {
+			candidate := residue + k*step
+			if candidate >= hi || candidate < residue {
+				break
+			}
+			if candidate >= lo && candidate%nttMod == 1%nttMod && candidate%plainMod == residueModT%plainMod && isPrimeUint64(candidate) {
+				return candidate, bits.Len64(candidate), nil
+			}
+			k++
+		}
+	}
+	return 0, 0, fmt.Errorf("no prime q found with q≡1 mod 2N, q≡%d mod T=%d, and bit-size in [%d,%d]", residueModT%plainMod, plainMod, minBits, maxBits)
+}
+
+func crtUint64(a, m, b, n uint64) (uint64, uint64, error) {
+	g := tailGCDUint64(m, n)
+	if a%g != b%g {
+		return 0, 0, fmt.Errorf("CRT has no solution: %d mod %d is incompatible with %d mod %d", a, m, b, n)
+	}
+	m1 := m / g
+	n1 := n / g
+	delta := (b + n - (a % n)) % n
+	delta /= g
+	inv, err := tailInvModUint64(m1%n1, n1)
+	if err != nil {
+		return 0, 0, err
+	}
+	x := tailMulMod(delta%n1, inv, n1)
+	lcmBig := new(big.Int).Mul(new(big.Int).SetUint64(m1), new(big.Int).SetUint64(n))
+	if !lcmBig.IsUint64() {
+		return 0, 0, fmt.Errorf("CRT modulus overflows uint64")
+	}
+	lcm := lcmBig.Uint64()
+	resBig := new(big.Int).SetUint64(m)
+	resBig.Mul(resBig, new(big.Int).SetUint64(x))
+	resBig.Add(resBig, new(big.Int).SetUint64(a))
+	resBig.Mod(resBig, new(big.Int).SetUint64(lcm))
+	return resBig.Uint64(), lcm, nil
+}
+
+func isPrimeUint64(q uint64) bool {
+	if q < 2 {
+		return false
+	}
+	if q%2 == 0 {
+		return q == 2
+	}
+	return new(big.Int).SetUint64(q).ProbablyPrime(32)
 }
